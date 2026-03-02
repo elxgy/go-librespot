@@ -31,24 +31,28 @@ type Login5 struct {
 
 	deviceId    string
 	clientToken string
+	clientId    string
 
 	loginOk     *pb.LoginOk
 	loginOkExp  time.Time
 	loginOkLock sync.RWMutex
 }
 
-func NewLogin5(log librespot.Logger, client *http.Client, deviceId, clientToken string) *Login5 {
+func NewLogin5(log librespot.Logger, client *http.Client, deviceId, clientToken, clientId string) *Login5 {
 	baseUrl, err := url.Parse("https://login5.spotify.com/")
 	if err != nil {
 		panic("invalid login5 base URL")
 	}
-
+	if clientId == "" {
+		clientId = librespot.ClientIdHex
+	}
 	return &Login5{
 		log:         log,
 		baseUrl:     baseUrl,
 		client:      client,
 		deviceId:    deviceId,
 		clientToken: clientToken,
+		clientId:    clientId,
 	}
 }
 
@@ -95,7 +99,7 @@ func (c *Login5) Login(ctx context.Context, credentials proto.Message) error {
 
 	req := &pb.LoginRequest{
 		ClientInfo: &pb.ClientInfo{
-			ClientId: librespot.ClientIdHex,
+			ClientId: c.clientId,
 			DeviceId: c.deviceId,
 		},
 	}

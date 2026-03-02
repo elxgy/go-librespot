@@ -13,12 +13,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func retrieveClientToken(c *http.Client, deviceId string) (string, error) {
+func retrieveClientToken(c *http.Client, deviceId, clientId string) (string, error) {
+	if clientId == "" {
+		clientId = librespot.ClientIdHex
+	}
 	body, err := proto.Marshal(&pbhttp.ClientTokenRequest{
 		RequestType: pbhttp.ClientTokenRequestType_REQUEST_CLIENT_DATA_REQUEST,
 		Request: &pbhttp.ClientTokenRequest_ClientData{
 			ClientData: &pbhttp.ClientDataRequest{
-				ClientId:      librespot.ClientIdHex,
+				ClientId:      clientId,
 				ClientVersion: librespot.SpotifyLikeClientVersion(),
 				Data: &pbhttp.ClientDataRequest_ConnectivitySdkData{
 					ConnectivitySdkData: &pbdata.ConnectivitySdkData{

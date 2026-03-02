@@ -16,7 +16,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	librespot "github.com/devgianlu/go-librespot"
-	metadatapb "github.com/devgianlu/go-librespot/proto/spotify/metadata"
 	"github.com/rs/cors"
 )
 
@@ -146,49 +145,11 @@ type ApiResponseStatusTrack struct {
 	DiscNumber    int      `json:"disc_number"`
 }
 
-func getBestImageIdForSize(images []*metadatapb.Image, size string) []byte {
-	if len(images) == 0 {
-		return nil
-	}
-
-	imageSize := metadatapb.Image_Size(metadatapb.Image_Size_value[strings.ToUpper(size)])
-
-	dist := func(a metadatapb.Image_Size) int {
-		diff := int(a) - int(imageSize)
-		if diff < 0 {
-			return -diff
-		}
-		return diff
-	}
-
-	// Find an image with the exact requested size.
-	// If no exact match, return the closest image to the requested size.
-	var bestImage *metadatapb.Image
-	for _, img := range images {
-		if img.Size == nil {
-			continue
-		}
-
-		if *img.Size == imageSize {
-			return img.FileId
-		}
-
-		// Find the image with the closest size. This logic works because the
-		// metadatapb.Image_Size enum values are ordered from smallest to largest.
-		if bestImage == nil || dist(*img.Size) < dist(*bestImage.Size) {
-			bestImage = img
-		}
-	}
-
-	if bestImage != nil {
-		return bestImage.FileId
-	}
-
-	// Fallback to the first image if none have size information.
-	return images[0].FileId
-}
-
 func (p *AppPlayer) newApiResponseStatusTrack(media *librespot.Media, position int64) *ApiResponseStatusTrack {
+	imageSize := p.app.cfg.Server.ImageSize
+	if imageSize == "" {
+		imageSize = "default"
+	}
 	if media.IsTrack() {
 		track := media.Track()
 
@@ -197,9 +158,9 @@ func (p *AppPlayer) newApiResponseStatusTrack(media *librespot.Media, position i
 			artists = append(artists, *a.Name)
 		}
 
-		albumCoverId := getBestImageIdForSize(track.Album.Cover, p.app.cfg.Server.ImageSize)
+		albumCoverId := librespot.GetBestImageIdForSize(track.Album.Cover, imageSize)
 		if albumCoverId == nil && track.Album.CoverGroup != nil {
-			albumCoverId = getBestImageIdForSize(track.Album.CoverGroup.Image, p.app.cfg.Server.ImageSize)
+			albumCoverId = librespot.GetBestImageIdForSize(track.Album.CoverGroup.Image, imageSize)
 		}
 
 		return &ApiResponseStatusTrack{
@@ -217,7 +178,7 @@ func (p *AppPlayer) newApiResponseStatusTrack(media *librespot.Media, position i
 	} else {
 		episode := media.Episode()
 
-		albumCoverId := getBestImageIdForSize(episode.CoverImage.Image, p.app.cfg.Server.ImageSize)
+		albumCoverId := librespot.GetBestImageIdForSize(episode.CoverImage.Image, imageSize)
 
 		return &ApiResponseStatusTrack{
 			Uri:           librespot.SpotifyIdFromGid(librespot.SpotifyIdTypeEpisode, episode.Gid).Uri(),

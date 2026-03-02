@@ -220,6 +220,10 @@ disable_autoplay: false # Whether autoplay of more songs should be disabled
 
 Make sure to check [here](/config_schema.json) for the full list of options.
 
+## Embedding
+
+To embed go-librespot in your own application (e.g. a TUI or custom client) instead of using the daemon, see [docs/embedding.md](docs/embedding.md). It covers session creation (including from a config directory and single OAuth flow), configurable track context size, logger adapters, Web API 429 retry, and image/product helpers.
+
 ## Development
 
 Protobuf definitions are managed through [Buf](https://buf.build). To recompile, execute:

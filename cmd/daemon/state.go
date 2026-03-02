@@ -123,7 +123,7 @@ func (p *AppPlayer) initState() {
 			DeviceId:              p.app.deviceId,
 			DeviceType:            p.app.deviceType,
 			DeviceSoftwareVersion: librespot.VersionString(),
-			ClientId:              librespot.ClientIdHex,
+			ClientId:              p.sess.ClientId(),
 			SpircVersion:          "3.2.6",
 			Capabilities: &connectpb.Capabilities{
 				CanBePlayer:                true,

@@ -41,7 +41,7 @@ type AppPlayer struct {
 
 	spotConnId string
 
-	prodInfo    *ProductInfo
+	prodInfo    *ap.ProductInfo
 	countryCode *string
 
 	state           *State
@@ -54,15 +54,13 @@ type AppPlayer struct {
 func (p *AppPlayer) handleAccesspointPacket(pktType ap.PacketType, payload []byte) error {
 	switch pktType {
 	case ap.PacketTypeProductInfo:
-		var prod ProductInfo
+		var prod ap.ProductInfo
 		if err := xml.Unmarshal(payload, &prod); err != nil {
-			return fmt.Errorf("failed umarshalling ProductInfo: %w", err)
+			return fmt.Errorf("failed unmarshalling ProductInfo: %w", err)
 		}
-
 		if len(prod.Products) != 1 {
 			return fmt.Errorf("invalid ProductInfo")
 		}
-
 		p.prodInfo = &prod
 		return nil
 	case ap.PacketTypeCountryCode:
@@ -155,7 +153,7 @@ func (p *AppPlayer) handlePlayerCommand(ctx context.Context, req dealer.RequestP
 		}
 		p.state.lastTransferTimestamp = transferState.Playback.Timestamp
 
-		ctxTracks, err := tracks.NewTrackListFromContext(ctx, p.app.log, p.sess.Spclient(), transferState.CurrentSession.Context)
+		ctxTracks, err := tracks.NewTrackListFromContext(ctx, p.app.log, p.sess.Spclient(), transferState.CurrentSession.Context, p.app.cfg.MaxTracksInContext)
 		if err != nil {
 			return fmt.Errorf("failed creating track list: %w", err)
 		}

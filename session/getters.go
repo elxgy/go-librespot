@@ -13,6 +13,14 @@ import (
 	"github.com/devgianlu/go-librespot/spclient"
 )
 
+func (s *Session) ClientId() string {
+	return s.clientId
+}
+
+func (s *Session) DeviceId() string {
+	return s.deviceId
+}
+
 func (s *Session) Username() string {
 	return s.ap.Username()
 }

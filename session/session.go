@@ -28,6 +28,7 @@ type Session struct {
 	deviceType  devicespb.DeviceType
 	deviceId    string
 	clientToken string
+	clientId    string
 
 	client *http.Client
 
@@ -55,20 +56,24 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 		return nil, fmt.Errorf("invalid device id length: %s", opts.DeviceId)
 	}
 
-	s := Session{
-		deviceType: opts.DeviceType,
-		deviceId:   opts.DeviceId,
-		client:     opts.Client,
+	clientId := librespot.ClientIdHex
+	if opts.ClientId != "" {
+		clientId = opts.ClientId
 	}
-
+	s := Session{
+		deviceType:  opts.DeviceType,
+		deviceId:    opts.DeviceId,
+		clientToken: "",
+		clientId:    clientId,
+		client:      opts.Client,
+	}
 	if s.client == nil {
 		s.client = &http.Client{Timeout: 30 * time.Second}
 	}
 
-	// use provided client token or retrieve a new one
 	if len(opts.ClientToken) == 0 {
 		var err error
-		s.clientToken, err = retrieveClientToken(s.client, s.deviceId)
+		s.clientToken, err = retrieveClientToken(s.client, s.deviceId, s.clientId)
 		if err != nil {
 			return nil, fmt.Errorf("failed obtaining client token: %w", err)
 		}
@@ -85,8 +90,7 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 		s.resolver = apresolve.NewApResolver(opts.Log, s.client)
 	}
 
-	// create new login5.Login5
-	s.login5 = login5.NewLogin5(opts.Log, s.client, s.deviceId, s.clientToken)
+	s.login5 = login5.NewLogin5(opts.Log, s.client, s.deviceId, s.clientToken, s.clientId)
 
 	// connect to the accesspoint
 	apAddr, err := s.resolver.GetAccesspoint(ctx)
@@ -112,7 +116,7 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 		}
 
 		oauthConf := &oauth2.Config{
-			ClientID:    librespot.ClientIdHex,
+			ClientID:    s.clientId,
 			RedirectURL: fmt.Sprintf("http://127.0.0.1:%d/login", callbackPort),
 			Scopes: []string{
 				"app-remote-control",

@@ -71,7 +71,7 @@ func NewApp(cfg *Config) (app *App, err error) {
 		DisableTimestamp: cfg.LogDisableTimestamp,
 	})
 
-	app.log = &LogrusAdapter{log.NewEntry(logger)}
+	app.log = &librespot.LogrusAdapter{Log: log.NewEntry(logger)}
 	app.client = &http.Client{Timeout: 30 * time.Second}
 
 	app.deviceType, err = parseDeviceType(cfg.DeviceType)
@@ -136,6 +136,7 @@ func (app *App) newAppPlayer(ctx context.Context, creds any) (_ *AppPlayer, err 
 		Log:         app.log,
 		DeviceType:  app.deviceType,
 		DeviceId:    app.deviceId,
+		ClientId:    app.cfg.ClientId,
 		ClientToken: app.clientToken,
 		Resolver:    app.resolver,
 		Client:      app.client,
@@ -391,6 +392,7 @@ type Config struct {
 	DeviceId                      string    `koanf:"device_id"`
 	DeviceName                    string    `koanf:"device_name"`
 	DeviceType                    string    `koanf:"device_type"`
+	ClientId                      string    `koanf:"client_id"`
 	ClientToken                   string    `koanf:"client_token"`
 	AudioBackend                  string    `koanf:"audio_backend"`
 	AudioDevice                   string    `koanf:"audio_device"`
@@ -401,6 +403,7 @@ type Config struct {
 	AudioOutputPipe               string    `koanf:"audio_output_pipe"`
 	AudioOutputPipeFormat         string    `koanf:"audio_output_pipe_format"`
 	Bitrate                       int       `koanf:"bitrate"`
+	MaxTracksInContext            int       `koanf:"max_tracks_in_context"`
 	VolumeSteps                   uint32    `koanf:"volume_steps"`
 	InitialVolume                 uint32    `koanf:"initial_volume"`
 	IgnoreLastVolume              bool      `koanf:"ignore_last_volume"`

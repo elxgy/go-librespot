@@ -28,6 +28,9 @@ type Options struct {
 
 	// AppState is the app state to use.
 	AppState *librespot.AppState
+
+	// ClientId is the Spotify client ID (hex string). If empty, the default librespot client ID is used.
+	ClientId string
 }
 
 type InteractiveCredentials struct {

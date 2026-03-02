@@ -23,11 +23,12 @@ type List struct {
 	shuffleKeep int
 	tracks      *pagedList[*connectpb.ContextTrack]
 
-	playingQueue bool
-	queue        []*connectpb.ContextTrack
+	playingQueue        bool
+	queue               []*connectpb.ContextTrack
+	maxTracksInContext  int
 }
 
-func NewTrackListFromContext(ctx context.Context, log_ librespot.Logger, sp *spclient.Spclient, spotCtx *connectpb.Context) (_ *List, err error) {
+func NewTrackListFromContext(ctx context.Context, log_ librespot.Logger, sp *spclient.Spclient, spotCtx *connectpb.Context, maxTracksInContext int) (_ *List, err error) {
 	tl := &List{}
 	tl.ctx, err = spclient.NewContextResolver(ctx, log_, sp, spotCtx)
 	if err != nil {
@@ -38,6 +39,10 @@ func NewTrackListFromContext(ctx context.Context, log_ librespot.Logger, sp *spc
 	tl.log.Debugf("resolved context of %s", tl.ctx.Type())
 
 	tl.tracks = newPagedList[*connectpb.ContextTrack](tl.log, tl.ctx)
+	if maxTracksInContext <= 0 {
+		maxTracksInContext = MaxTracksInContext
+	}
+	tl.maxTracksInContext = maxTracksInContext
 	return tl, nil
 }
 
@@ -93,11 +98,19 @@ func (tl *List) AllTracks(ctx context.Context) []*connectpb.ProvidedTrack {
 
 const MaxTracksInContext = 32
 
+func (tl *List) maxTracks() int {
+	if tl.maxTracksInContext <= 0 {
+		return MaxTracksInContext
+	}
+	return tl.maxTracksInContext
+}
+
 func (tl *List) PrevTracks() []*connectpb.ProvidedTrack {
-	tracks := make([]*connectpb.ProvidedTrack, 0, MaxTracksInContext)
+	maxT := tl.maxTracks()
+	tracks := make([]*connectpb.ProvidedTrack, 0, maxT)
 
 	iter := tl.tracks.iterHere()
-	for len(tracks) < MaxTracksInContext && iter.prev() {
+	for len(tracks) < maxT && iter.prev() {
 		curr := iter.get()
 		tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), curr.item))
 	}
@@ -113,7 +126,8 @@ func (tl *List) PrevTracks() []*connectpb.ProvidedTrack {
 }
 
 func (tl *List) NextTracks(ctx context.Context, nextHint []*connectpb.ContextTrack) []*connectpb.ProvidedTrack {
-	tracks := make([]*connectpb.ProvidedTrack, 0, MaxTracksInContext)
+	maxT := tl.maxTracks()
+	tracks := make([]*connectpb.ProvidedTrack, 0, maxT)
 
 	if len(tl.queue) > 0 {
 		queue := tl.queue
@@ -121,23 +135,21 @@ func (tl *List) NextTracks(ctx context.Context, nextHint []*connectpb.ContextTra
 			queue = queue[1:]
 		}
 
-		for i := 0; i < len(queue) && len(tracks) < MaxTracksInContext; i++ {
+		for i := 0; i < len(queue) && len(tracks) < maxT; i++ {
 			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), queue[i]))
 		}
 	}
 
-	// when set_queue commands are called, the order of the queue is given by the "next hint"
 	if nextHint != nil {
 		queueLength := len(tl.queue)
 		if tl.playingQueue {
 			queueLength -= 1
 		}
 		for idx, curr := range nextHint {
-			// skip all the tracks that are already in the queue (green square icon inside spotify)
 			if idx < queueLength {
 				continue
 			}
-			if !(len(tracks) < MaxTracksInContext) {
+			if !(len(tracks) < maxT) {
 				break
 			}
 
@@ -154,7 +166,7 @@ func (tl *List) NextTracks(ctx context.Context, nextHint []*connectpb.ContextTra
 		defer cancel()
 
 		iter := tl.tracks.iterHere()
-		for len(tracks) < MaxTracksInContext && iter.next(ctx) {
+		for len(tracks) < maxT && iter.next(ctx) {
 			curr := iter.get()
 			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), curr.item))
 		}
