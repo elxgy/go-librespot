@@ -196,7 +196,7 @@ const file_spotify_login5_v3_challenges_login5_challenges_code_proto_rawDesc = "
 	"\x03SMS\x10\x01\"\"\n" +
 	"\fCodeSolution\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04codeB\x97\x02\n" +
-	" com.spotify.login5.v3.challengesB\x19Login5ChallengesCodeProtoP\x01ZDgithub.com/devgianlu/go-librespot/proto/spotify/login5/v3/challenges\xa2\x02\x04SLVC\xaa\x02\x1cSpotify.Login5.V3.Challenges\xca\x02\x1cSpotify\\Login5\\V3\\Challenges\xe2\x02(Spotify\\Login5\\V3\\Challenges\\GPBMetadata\xea\x02\x1fSpotify::Login5::V3::Challengesb\x06proto3"
+	" com.spotify.login5.v3.challengesB\x19Login5ChallengesCodeProtoP\x01ZDgithub.com/elxgy/go-librespot/proto/spotify/login5/v3/challenges\xa2\x02\x04SLVC\xaa\x02\x1cSpotify.Login5.V3.Challenges\xca\x02\x1cSpotify\\Login5\\V3\\Challenges\xe2\x02(Spotify\\Login5\\V3\\Challenges\\GPBMetadata\xea\x02\x1fSpotify::Login5::V3::Challengesb\x06proto3"
 
 var (
 	file_spotify_login5_v3_challenges_login5_challenges_code_proto_rawDescOnce sync.Once

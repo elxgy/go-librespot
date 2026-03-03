@@ -3,7 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 	"net"
 	"net/http"
 )

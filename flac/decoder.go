@@ -6,7 +6,7 @@ import (
 	"io"
 	"unsafe"
 
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 )
 
 // #cgo pkg-config: flac

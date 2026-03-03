@@ -1,7 +1,7 @@
 package mpris
 
 import (
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 	"github.com/godbus/dbus/v5"
 )
 

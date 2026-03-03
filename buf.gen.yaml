@@ -3,10 +3,10 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/devgianlu/go-librespot/proto
+      value: github.com/elxgy/go-librespot/proto
 plugins:
   - remote: buf.build/protocolbuffers/go:v1.36.10
     out: proto
-    opt: module=github.com/devgianlu/go-librespot/proto
+    opt: module=github.com/elxgy/go-librespot/proto
 inputs:
   - directory: proto

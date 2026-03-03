@@ -7,7 +7,7 @@
 package metadata
 
 import (
-	v1 "github.com/devgianlu/go-librespot/proto/spotify/metadata/contentratings/v1"
+	v1 "github.com/elxgy/go-librespot/proto/spotify/metadata/contentratings/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -3314,7 +3314,7 @@ const file_spotify_metadata_metadata_proto_rawDesc = "" +
 	"\rContentRating\x12\x18\n" +
 	"\acountry\x18\x01 \x01(\tR\acountry\x12\x10\n" +
 	"\x03tag\x18\x02 \x03(\tR\x03tagB\xc0\x01\n" +
-	"\x14com.spotify.metadataB\rMetadataProtoP\x01Z8github.com/devgianlu/go-librespot/proto/spotify/metadata\xa2\x02\x03SMX\xaa\x02\x10Spotify.Metadata\xca\x02\x10Spotify\\Metadata\xe2\x02\x1cSpotify\\Metadata\\GPBMetadata\xea\x02\x11Spotify::Metadata"
+	"\x14com.spotify.metadataB\rMetadataProtoP\x01Z8github.com/elxgy/go-librespot/proto/spotify/metadata\xa2\x02\x03SMX\xaa\x02\x10Spotify.Metadata\xca\x02\x10Spotify\\Metadata\xe2\x02\x1cSpotify\\Metadata\\GPBMetadata\xea\x02\x11Spotify::Metadata"
 
 var (
 	file_spotify_metadata_metadata_proto_rawDescOnce sync.Once

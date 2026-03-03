@@ -97,7 +97,7 @@ const file_spotify_common_media_media_proto_rawDesc = "" +
 	"\x04HIFI\x10\x05\x12\v\n" +
 	"\aHIFI_24\x10\x06B\xd6\x01\n" +
 	"\x18com.spotify.common.mediaB\n" +
-	"MediaProtoP\x01Z<github.com/devgianlu/go-librespot/proto/spotify/common/media\xa2\x02\x03SCM\xaa\x02\x14Spotify.Common.Media\xca\x02\x14Spotify\\Common\\Media\xe2\x02 Spotify\\Common\\Media\\GPBMetadata\xea\x02\x16Spotify::Common::Mediab\x06proto3"
+	"MediaProtoP\x01Z<github.com/elxgy/go-librespot/proto/spotify/common/media\xa2\x02\x03SCM\xaa\x02\x14Spotify.Common.Media\xca\x02\x14Spotify\\Common\\Media\xe2\x02 Spotify\\Common\\Media\\GPBMetadata\xea\x02\x16Spotify::Common::Mediab\x06proto3"
 
 var (
 	file_spotify_common_media_media_proto_rawDescOnce sync.Once

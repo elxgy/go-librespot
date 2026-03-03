@@ -2,6 +2,8 @@
 
 This document describes how to embed go-librespot in your own application (e.g. a TUI, custom daemon, or other client) instead of using the built-in daemon.
 
+For using a **single auth flow** (one OAuth login for both your app and the librespot session), see [single-auth-flow.md](single-auth-flow.md).
+
 ## Session creation
 
 ### Option 1: Session from config directory
@@ -10,8 +12,8 @@ Use the `sessionconfig` package to create a session from a config directory. It 
 
 ```go
 import (
-    "github.com/devgianlu/go-librespot"
-    "github.com/devgianlu/go-librespot/sessionconfig"
+    "github.com/elxgy/go-librespot"
+    "github.com/elxgy/go-librespot/sessionconfig"
 )
 
 sess, appState, err := sessionconfig.NewSessionFromConfigDir(ctx, log, sessionconfig.Options{
@@ -27,7 +29,7 @@ sess, appState, err := sessionconfig.NewSessionFromConfigDir(ctx, log, sessionco
 To use a **single OAuth flow** (e.g. your app already has a Spotify token from PKCE), pass the same client ID and token credentials:
 
 ```go
-import "github.com/devgianlu/go-librespot/session"
+import "github.com/elxgy/go-librespot/session"
 
 sess, appState, err := sessionconfig.NewSessionFromConfigDir(ctx, log, sessionconfig.Options{
     ConfigDir:    configDir,
@@ -52,7 +54,7 @@ Build `session.Options` yourself and call `session.NewSessionFromOptions`. Set `
 When creating a track list from a context, pass the **fifth argument** for how many prev/next tracks to load:
 
 ```go
-import "github.com/devgianlu/go-librespot/tracks"
+import "github.com/elxgy/go-librespot/tracks"
 
 list, err := tracks.NewTrackListFromContext(ctx, log, sp, spotCtx, maxTracksInContext)
 ```
@@ -66,7 +68,7 @@ If you use Logrus, implement the library `Logger` interface with the provided ad
 
 ```go
 import (
-    librespot "github.com/devgianlu/go-librespot"
+    librespot "github.com/elxgy/go-librespot"
     "github.com/sirupsen/logrus"
 )
 
@@ -110,3 +112,4 @@ Alternatively, use `WebApiWith429RetryAndReadBody` to get the response body and 
 | Web API with 429 retry | `sess.WebApiWith429Retry(ctx, method, path, query, header, body)` |
 | Image size selection | `librespot.GetBestImageIdForSize(images, size)` |
 | Product info / image URL | `ap.ProductInfo`, `pi.ImageUrl(fileId)` |
+| Current user ID from token | `spotifyuser.GetCurrentUserID(ctx, accessToken)` (for single-auth) |

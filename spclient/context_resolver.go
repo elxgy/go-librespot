@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	librespot "github.com/devgianlu/go-librespot"
-	connectpb "github.com/devgianlu/go-librespot/proto/spotify/connectstate"
+	librespot "github.com/elxgy/go-librespot"
+	connectpb "github.com/elxgy/go-librespot/proto/spotify/connectstate"
 	"golang.org/x/exp/maps"
 )
 

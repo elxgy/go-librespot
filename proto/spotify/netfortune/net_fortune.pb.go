@@ -194,7 +194,7 @@ const file_spotify_netfortune_net_fortune_proto_rawDesc = "" +
 	"$advised_prefetch_bitrate_non_metered\x18\x04 \x01(\x05H\x01R advisedPrefetchBitrateNonMeteredB#\n" +
 	"!_advised_prefetch_bitrate_meteredB'\n" +
 	"%_advised_prefetch_bitrate_non_meteredB\xce\x01\n" +
-	"\x16com.spotify.netfortuneB\x0fNetFortuneProtoP\x01Z:github.com/devgianlu/go-librespot/proto/spotify/netfortune\xa2\x02\x03SNX\xaa\x02\x12Spotify.Netfortune\xca\x02\x12Spotify\\Netfortune\xe2\x02\x1eSpotify\\Netfortune\\GPBMetadata\xea\x02\x13Spotify::Netfortuneb\x06proto3"
+	"\x16com.spotify.netfortuneB\x0fNetFortuneProtoP\x01Z:github.com/elxgy/go-librespot/proto/spotify/netfortune\xa2\x02\x03SNX\xaa\x02\x12Spotify.Netfortune\xca\x02\x12Spotify\\Netfortune\xe2\x02\x1eSpotify\\Netfortune\\GPBMetadata\xea\x02\x13Spotify::Netfortuneb\x06proto3"
 
 var (
 	file_spotify_netfortune_net_fortune_proto_rawDescOnce sync.Once

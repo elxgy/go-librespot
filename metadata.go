@@ -3,7 +3,7 @@ package go_librespot
 import (
 	"strings"
 
-	metadatapb "github.com/devgianlu/go-librespot/proto/spotify/metadata"
+	metadatapb "github.com/elxgy/go-librespot/proto/spotify/metadata"
 )
 
 func GetBestImageIdForSize(images []*metadatapb.Image, size string) []byte {

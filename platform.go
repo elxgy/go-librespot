@@ -3,8 +3,8 @@ package go_librespot
 import (
 	"runtime"
 
-	spotifypb "github.com/devgianlu/go-librespot/proto/spotify"
-	clienttokenpb "github.com/devgianlu/go-librespot/proto/spotify/clienttoken/data/v0"
+	spotifypb "github.com/elxgy/go-librespot/proto/spotify"
+	clienttokenpb "github.com/elxgy/go-librespot/proto/spotify/clienttoken/data/v0"
 )
 
 func GetOS() spotifypb.Os {

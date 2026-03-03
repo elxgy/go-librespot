@@ -749,7 +749,7 @@ const file_spotify_clienttoken_data_v0_connectivity_proto_rawDesc = "" +
 	"\adensity\x18\x03 \x01(\x05R\adensity\x12&\n" +
 	"\x0funknown_value_4\x18\x04 \x01(\x05R\runknownValue4\x12&\n" +
 	"\x0funknown_value_5\x18\x05 \x01(\x05R\runknownValue5B\x89\x02\n" +
-	"\x1fcom.spotify.clienttoken.data.v0B\x11ConnectivityProtoP\x01ZCgithub.com/devgianlu/go-librespot/proto/spotify/clienttoken/data/v0\xa2\x02\x04SCDV\xaa\x02\x1bSpotify.Clienttoken.Data.V0\xca\x02\x1bSpotify\\Clienttoken\\Data\\V0\xe2\x02'Spotify\\Clienttoken\\Data\\V0\\GPBMetadata\xea\x02\x1eSpotify::Clienttoken::Data::V0b\x06proto3"
+	"\x1fcom.spotify.clienttoken.data.v0B\x11ConnectivityProtoP\x01ZCgithub.com/elxgy/go-librespot/proto/spotify/clienttoken/data/v0\xa2\x02\x04SCDV\xaa\x02\x1bSpotify.Clienttoken.Data.V0\xca\x02\x1bSpotify\\Clienttoken\\Data\\V0\xe2\x02'Spotify\\Clienttoken\\Data\\V0\\GPBMetadata\xea\x02\x1eSpotify::Clienttoken::Data::V0b\x06proto3"
 
 var (
 	file_spotify_clienttoken_data_v0_connectivity_proto_rawDescOnce sync.Once

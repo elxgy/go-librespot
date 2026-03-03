@@ -1007,7 +1007,7 @@ const file_spotify_extendedmetadata_extension_kind_proto_rawDesc = "" +
 	"\x0eVENUE_LOCATION\x10\xe6\x01\x12\x16\n" +
 	"\x11TRANSCRIPT_SEARCH\x10\xe7\x01\x12\x14\n" +
 	"\x0fSONGDNA_CREDITS\x10\xe8\x01B\xf5\x01\n" +
-	"\x1ccom.spotify.extendedmetadataB\x12ExtensionKindProtoP\x01Z@github.com/devgianlu/go-librespot/proto/spotify/extendedmetadata\xa2\x02\x03SEX\xaa\x02\x18Spotify.Extendedmetadata\xca\x02\x18Spotify\\Extendedmetadata\xe2\x02$Spotify\\Extendedmetadata\\GPBMetadata\xea\x02\x19Spotify::Extendedmetadatab\x06proto3"
+	"\x1ccom.spotify.extendedmetadataB\x12ExtensionKindProtoP\x01Z@github.com/elxgy/go-librespot/proto/spotify/extendedmetadata\xa2\x02\x03SEX\xaa\x02\x18Spotify.Extendedmetadata\xca\x02\x18Spotify\\Extendedmetadata\xe2\x02$Spotify\\Extendedmetadata\\GPBMetadata\xea\x02\x19Spotify::Extendedmetadatab\x06proto3"
 
 var (
 	file_spotify_extendedmetadata_extension_kind_proto_rawDescOnce sync.Once

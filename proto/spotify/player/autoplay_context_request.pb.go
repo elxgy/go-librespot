@@ -91,7 +91,7 @@ const file_spotify_player_autoplay_context_request_proto_rawDesc = "" +
 	"contextUri\x12(\n" +
 	"\x10recent_track_uri\x18\x02 \x03(\tR\x0erecentTrackUri\x12\x19\n" +
 	"\bis_video\x18\x03 \x01(\bR\aisVideoB\xc2\x01\n" +
-	"\x12com.spotify.playerB\x1bAutoplayContextRequestProtoP\x01Z6github.com/devgianlu/go-librespot/proto/spotify/player\xa2\x02\x03SPX\xaa\x02\x0eSpotify.Player\xca\x02\x0eSpotify\\Player\xe2\x02\x1aSpotify\\Player\\GPBMetadata\xea\x02\x0fSpotify::Player"
+	"\x12com.spotify.playerB\x1bAutoplayContextRequestProtoP\x01Z6github.com/elxgy/go-librespot/proto/spotify/player\xa2\x02\x03SPX\xaa\x02\x0eSpotify.Player\xca\x02\x0eSpotify\\Player\xe2\x02\x1aSpotify\\Player\\GPBMetadata\xea\x02\x0fSpotify::Player"
 
 var (
 	file_spotify_player_autoplay_context_request_proto_rawDescOnce sync.Once

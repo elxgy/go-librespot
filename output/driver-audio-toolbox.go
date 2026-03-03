@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"unsafe"
 
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )

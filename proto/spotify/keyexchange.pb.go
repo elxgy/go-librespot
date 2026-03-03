@@ -2191,7 +2191,7 @@ const file_spotify_keyexchange_proto_rawDesc = "" +
 	"\x19ExtraVerificationRequired\x10\x0f\x12\x11\n" +
 	"\rInvalidAppKey\x10\x10\x12\x15\n" +
 	"\x11ApplicationBanned\x10\x11B\x8c\x01\n" +
-	"\vcom.spotifyB\x10KeyexchangeProtoP\x01Z/github.com/devgianlu/go-librespot/proto/spotify\xa2\x02\x03SXX\xaa\x02\aSpotify\xca\x02\aSpotify\xe2\x02\x13Spotify\\GPBMetadata\xea\x02\aSpotify"
+	"\vcom.spotifyB\x10KeyexchangeProtoP\x01Z/github.com/elxgy/go-librespot/proto/spotify\xa2\x02\x03SXX\xaa\x02\aSpotify\xca\x02\aSpotify\xe2\x02\x13Spotify\\GPBMetadata\xea\x02\aSpotify"
 
 var (
 	file_spotify_keyexchange_proto_rawDescOnce sync.Once

@@ -293,7 +293,7 @@ const file_spotify_streaming_playplay_proto_rawDesc = "" +
 	"\vAUDIO_TRACK\x10\x01\x12\x11\n" +
 	"\rAUDIO_EPISODE\x10\x02\x12\f\n" +
 	"\bAUDIO_AD\x10\x03B\xb7\x01\n" +
-	"\x12com.spotify.streamB\rPlayplayProtoP\x01Z9github.com/devgianlu/go-librespot/proto/spotify/streaming\xa2\x02\x03SSX\xaa\x02\x0eSpotify.Stream\xca\x02\x0eSpotify\\Stream\xe2\x02\x1aSpotify\\Stream\\GPBMetadata\xea\x02\x0fSpotify::Stream"
+	"\x12com.spotify.streamB\rPlayplayProtoP\x01Z9github.com/elxgy/go-librespot/proto/spotify/streaming\xa2\x02\x03SSX\xaa\x02\x0eSpotify.Stream\xca\x02\x0eSpotify\\Stream\xe2\x02\x1aSpotify\\Stream\\GPBMetadata\xea\x02\x0fSpotify::Stream"
 
 var (
 	file_spotify_streaming_playplay_proto_rawDescOnce sync.Once

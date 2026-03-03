@@ -193,7 +193,7 @@ const file_spotify_login5_v3_login5_user_info_proto_rawDesc = "" +
 	"\n" +
 	"\x06FEMALE\x10\x02\x12\v\n" +
 	"\aNEUTRAL\x10\x03B\xd6\x01\n" +
-	"\x15com.spotify.login5.v3B\x13Login5UserInfoProtoP\x01ZBgithub.com/devgianlu/go-librespot/proto/spotify/login5/v3;login5v3\xa2\x02\x03SLX\xaa\x02\x11Spotify.Login5.V3\xca\x02\x11Spotify\\Login5\\V3\xe2\x02\x1dSpotify\\Login5\\V3\\GPBMetadata\xea\x02\x13Spotify::Login5::V3b\x06proto3"
+	"\x15com.spotify.login5.v3B\x13Login5UserInfoProtoP\x01ZBgithub.com/elxgy/go-librespot/proto/spotify/login5/v3;login5v3\xa2\x02\x03SLX\xaa\x02\x11Spotify.Login5.V3\xca\x02\x11Spotify\\Login5\\V3\xe2\x02\x1dSpotify\\Login5\\V3\\GPBMetadata\xea\x02\x13Spotify::Login5::V3b\x06proto3"
 
 var (
 	file_spotify_login5_v3_login5_user_info_proto_rawDescOnce sync.Once

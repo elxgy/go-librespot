@@ -1,9 +1,9 @@
 package session
 
 import (
-	librespot "github.com/devgianlu/go-librespot"
-	"github.com/devgianlu/go-librespot/apresolve"
-	devicespb "github.com/devgianlu/go-librespot/proto/spotify/connectstate/devices"
+	librespot "github.com/elxgy/go-librespot"
+	"github.com/elxgy/go-librespot/apresolve"
+	devicespb "github.com/elxgy/go-librespot/proto/spotify/connectstate/devices"
 	"net/http"
 )
 

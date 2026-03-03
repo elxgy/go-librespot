@@ -92,7 +92,7 @@ const file_spotify_playlist_signal_signal_model_proto_rawDesc = "" +
 	"identifier\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\x12%\n" +
 	"\x0eclient_payload\x18\x03 \x01(\fR\rclientPayloadB\xee\x01\n" +
-	"\x1bcom.spotify.playlist.signalB\x10SignalModelProtoP\x01Z?github.com/devgianlu/go-librespot/proto/spotify/playlist/signal\xa2\x02\x03SPS\xaa\x02\x17Spotify.Playlist.Signal\xca\x02\x17Spotify\\Playlist\\Signal\xe2\x02#Spotify\\Playlist\\Signal\\GPBMetadata\xea\x02\x19Spotify::Playlist::Signalb\x06proto3"
+	"\x1bcom.spotify.playlist.signalB\x10SignalModelProtoP\x01Z?github.com/elxgy/go-librespot/proto/spotify/playlist/signal\xa2\x02\x03SPS\xaa\x02\x17Spotify.Playlist.Signal\xca\x02\x17Spotify\\Playlist\\Signal\xe2\x02#Spotify\\Playlist\\Signal\\GPBMetadata\xea\x02\x19Spotify::Playlist::Signalb\x06proto3"
 
 var (
 	file_spotify_playlist_signal_signal_model_proto_rawDescOnce sync.Once

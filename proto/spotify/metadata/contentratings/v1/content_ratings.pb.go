@@ -238,7 +238,7 @@ const file_spotify_metadata_contentratings_v1_content_ratings_proto_rawDesc = ""
 	"\"CONTENT_RATING_TAG_SPOTIFY_18_PLUS\x10\x03\x12\x1d\n" +
 	"\x19CONTENT_RATING_TAG_EROTIC\x10\x04\x12'\n" +
 	"#CONTENT_RATING_TAG_NOT_FOR_CHILDREN\x10\x05B\xc5\x02\n" +
-	"&com.spotify.metadata.contentratings.v1B\x13ContentRatingsProtoP\x01Z[github.com/devgianlu/go-librespot/proto/spotify/metadata/contentratings/v1;contentratingsv1\xa2\x02\x03SMC\xaa\x02\"Spotify.Metadata.Contentratings.V1\xca\x02\"Spotify\\Metadata\\Contentratings\\V1\xe2\x02.Spotify\\Metadata\\Contentratings\\V1\\GPBMetadata\xea\x02%Spotify::Metadata::Contentratings::V1b\x06proto3"
+	"&com.spotify.metadata.contentratings.v1B\x13ContentRatingsProtoP\x01Z[github.com/elxgy/go-librespot/proto/spotify/metadata/contentratings/v1;contentratingsv1\xa2\x02\x03SMC\xaa\x02\"Spotify.Metadata.Contentratings.V1\xca\x02\"Spotify\\Metadata\\Contentratings\\V1\xe2\x02.Spotify\\Metadata\\Contentratings\\V1\\GPBMetadata\xea\x02%Spotify::Metadata::Contentratings::V1b\x06proto3"
 
 var (
 	file_spotify_metadata_contentratings_v1_content_ratings_proto_rawDescOnce sync.Once

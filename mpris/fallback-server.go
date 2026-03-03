@@ -3,7 +3,7 @@
 package mpris
 
 import (
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 )
 
 // NewServer creates a no-op mpris server to replace the equivalently named method in builds outside linux

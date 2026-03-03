@@ -3,7 +3,7 @@ package go_librespot
 import (
 	"errors"
 
-	metadatapb "github.com/devgianlu/go-librespot/proto/spotify/metadata"
+	metadatapb "github.com/elxgy/go-librespot/proto/spotify/metadata"
 )
 
 var (

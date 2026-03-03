@@ -1,6 +1,6 @@
 services:
   daemon:
-    image: ghcr.io/devgianlu/go-librespot
+    image: ghcr.io/elxgy/go-librespot
     build: .
     network_mode: host
     userns_mode: keep-id

@@ -493,7 +493,7 @@ const file_spotify_login5_v3_credentials_login5_credentials_proto_rawDesc = "" +
 	"\x16GoogleSignInCredential\x12\x1b\n" +
 	"\tauth_code\x18\x01 \x01(\tR\bauthCode\x12!\n" +
 	"\fredirect_uri\x18\x02 \x01(\tR\vredirectUriB\x9a\x02\n" +
-	"!com.spotify.login5.v3.credentialsB\x16Login5CredentialsProtoP\x01ZEgithub.com/devgianlu/go-librespot/proto/spotify/login5/v3/credentials\xa2\x02\x04SLVC\xaa\x02\x1dSpotify.Login5.V3.Credentials\xca\x02\x1dSpotify\\Login5\\V3\\Credentials\xe2\x02)Spotify\\Login5\\V3\\Credentials\\GPBMetadata\xea\x02 Spotify::Login5::V3::Credentialsb\x06proto3"
+	"!com.spotify.login5.v3.credentialsB\x16Login5CredentialsProtoP\x01ZEgithub.com/elxgy/go-librespot/proto/spotify/login5/v3/credentials\xa2\x02\x04SLVC\xaa\x02\x1dSpotify.Login5.V3.Credentials\xca\x02\x1dSpotify\\Login5\\V3\\Credentials\xe2\x02)Spotify\\Login5\\V3\\Credentials\\GPBMetadata\xea\x02 Spotify::Login5::V3::Credentialsb\x06proto3"
 
 var (
 	file_spotify_login5_v3_credentials_login5_credentials_proto_rawDescOnce sync.Once

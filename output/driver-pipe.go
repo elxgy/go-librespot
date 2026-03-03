@@ -10,7 +10,7 @@ import (
 	"sync"
 	"syscall"
 
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 )
 
 type pipeOutput struct {

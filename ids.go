@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	connectpb "github.com/devgianlu/go-librespot/proto/spotify/connectstate"
+	connectpb "github.com/elxgy/go-librespot/proto/spotify/connectstate"
 )
 
 var UriRegexp = regexp.MustCompile("^spotify:([a-z]+):([0-9a-zA-Z]{21,22})$")

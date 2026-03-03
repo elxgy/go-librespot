@@ -6,7 +6,7 @@ import (
 	"math/bits"
 	"time"
 
-	challengespb "github.com/devgianlu/go-librespot/proto/spotify/login5/v3/challenges"
+	challengespb "github.com/elxgy/go-librespot/proto/spotify/login5/v3/challenges"
 )
 
 func checkHashcash(hash []byte, length int) bool {

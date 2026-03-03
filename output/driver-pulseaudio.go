@@ -5,7 +5,7 @@ import (
 	"io"
 	"sync"
 
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 	"github.com/jfreymuth/pulse"
 	"github.com/jfreymuth/pulse/proto"
 )

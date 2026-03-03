@@ -7,9 +7,9 @@
 package login5v3
 
 import (
-	challenges "github.com/devgianlu/go-librespot/proto/spotify/login5/v3/challenges"
-	credentials "github.com/devgianlu/go-librespot/proto/spotify/login5/v3/credentials"
-	identifiers "github.com/devgianlu/go-librespot/proto/spotify/login5/v3/identifiers"
+	challenges "github.com/elxgy/go-librespot/proto/spotify/login5/v3/challenges"
+	credentials "github.com/elxgy/go-librespot/proto/spotify/login5/v3/credentials"
+	identifiers "github.com/elxgy/go-librespot/proto/spotify/login5/v3/identifiers"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -872,7 +872,7 @@ const file_spotify_login5_v3_login5_proto_rawDesc = "" +
 	"\x11TOO_MANY_ATTEMPTS\x10\x06\x12\x17\n" +
 	"\x13INVALID_PHONENUMBER\x10\a\x12\x13\n" +
 	"\x0fTRY_AGAIN_LATER\x10\bB\xce\x01\n" +
-	"\x15com.spotify.login5.v3B\vLogin5ProtoP\x01ZBgithub.com/devgianlu/go-librespot/proto/spotify/login5/v3;login5v3\xa2\x02\x03SLX\xaa\x02\x11Spotify.Login5.V3\xca\x02\x11Spotify\\Login5\\V3\xe2\x02\x1dSpotify\\Login5\\V3\\GPBMetadata\xea\x02\x13Spotify::Login5::V3b\x06proto3"
+	"\x15com.spotify.login5.v3B\vLogin5ProtoP\x01ZBgithub.com/elxgy/go-librespot/proto/spotify/login5/v3;login5v3\xa2\x02\x03SLX\xaa\x02\x11Spotify.Login5.V3\xca\x02\x11Spotify\\Login5\\V3\xe2\x02\x1dSpotify\\Login5\\V3\\GPBMetadata\xea\x02\x13Spotify::Login5::V3b\x06proto3"
 
 var (
 	file_spotify_login5_v3_login5_proto_rawDescOnce sync.Once

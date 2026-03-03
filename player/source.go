@@ -5,7 +5,7 @@ import (
 	"io"
 	"sync"
 
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 )
 
 type SwitchingAudioSource struct {

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	librespot "github.com/devgianlu/go-librespot"
-	"github.com/devgianlu/go-librespot/ap"
+	librespot "github.com/elxgy/go-librespot"
+	"github.com/elxgy/go-librespot/ap"
 )
 
 type KeyProviderError struct {

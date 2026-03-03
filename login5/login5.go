@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	librespot "github.com/devgianlu/go-librespot"
-	pb "github.com/devgianlu/go-librespot/proto/spotify/login5/v3"
-	credentialspb "github.com/devgianlu/go-librespot/proto/spotify/login5/v3/credentials"
+	librespot "github.com/elxgy/go-librespot"
+	pb "github.com/elxgy/go-librespot/proto/spotify/login5/v3"
+	credentialspb "github.com/elxgy/go-librespot/proto/spotify/login5/v3/credentials"
 	"google.golang.org/protobuf/proto"
 )
 

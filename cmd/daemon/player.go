@@ -15,17 +15,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/devgianlu/go-librespot/mpris"
+	"github.com/elxgy/go-librespot/mpris"
 	"github.com/godbus/dbus/v5"
 	"google.golang.org/protobuf/proto"
 
-	librespot "github.com/devgianlu/go-librespot"
-	"github.com/devgianlu/go-librespot/ap"
-	"github.com/devgianlu/go-librespot/dealer"
-	"github.com/devgianlu/go-librespot/player"
-	connectpb "github.com/devgianlu/go-librespot/proto/spotify/connectstate"
-	"github.com/devgianlu/go-librespot/session"
-	"github.com/devgianlu/go-librespot/tracks"
+	librespot "github.com/elxgy/go-librespot"
+	"github.com/elxgy/go-librespot/ap"
+	"github.com/elxgy/go-librespot/dealer"
+	"github.com/elxgy/go-librespot/player"
+	connectpb "github.com/elxgy/go-librespot/proto/spotify/connectstate"
+	"github.com/elxgy/go-librespot/session"
+	"github.com/elxgy/go-librespot/tracks"
 )
 
 type AppPlayer struct {

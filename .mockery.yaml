@@ -7,7 +7,7 @@ template-data:
   mock-build-tags: test_unit || test_integration
   unroll-variadic: true
 packages:
-  github.com/devgianlu/go-librespot:
+  github.com/elxgy/go-librespot:
     interfaces:
       Logger:
       PageResolver:

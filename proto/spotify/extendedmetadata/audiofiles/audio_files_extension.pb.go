@@ -7,7 +7,7 @@
 package audiofiles
 
 import (
-	metadata "github.com/devgianlu/go-librespot/proto/spotify/metadata"
+	metadata "github.com/elxgy/go-librespot/proto/spotify/metadata"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -212,7 +212,7 @@ const file_spotify_extendedmetadata_audiofiles_audio_files_extension_proto_rawDe
 	"!default_file_normalization_params\x18\x02 \x01(\v28.spotify.extendedmetadata.audiofiles.NormalizationParamsR\x1edefaultFileNormalizationParams\x12\x85\x01\n" +
 	"\"default_album_normalization_params\x18\x03 \x01(\v28.spotify.extendedmetadata.audiofiles.NormalizationParamsR\x1fdefaultAlbumNormalizationParams\x12\x19\n" +
 	"\baudio_id\x18\x04 \x01(\fR\aaudioIdB\xbe\x02\n" +
-	"'com.spotify.extendedmetadata.audiofilesB\x18AudioFilesExtensionProtoP\x01ZKgithub.com/devgianlu/go-librespot/proto/spotify/extendedmetadata/audiofiles\xa2\x02\x03SEA\xaa\x02#Spotify.Extendedmetadata.Audiofiles\xca\x02#Spotify\\Extendedmetadata\\Audiofiles\xe2\x02/Spotify\\Extendedmetadata\\Audiofiles\\GPBMetadata\xea\x02%Spotify::Extendedmetadata::Audiofilesb\x06proto3"
+	"'com.spotify.extendedmetadata.audiofilesB\x18AudioFilesExtensionProtoP\x01ZKgithub.com/elxgy/go-librespot/proto/spotify/extendedmetadata/audiofiles\xa2\x02\x03SEA\xaa\x02#Spotify.Extendedmetadata.Audiofiles\xca\x02#Spotify\\Extendedmetadata\\Audiofiles\xe2\x02/Spotify\\Extendedmetadata\\Audiofiles\\GPBMetadata\xea\x02%Spotify::Extendedmetadata::Audiofilesb\x06proto3"
 
 var (
 	file_spotify_extendedmetadata_audiofiles_audio_files_extension_proto_rawDescOnce sync.Once

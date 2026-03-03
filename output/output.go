@@ -3,7 +3,7 @@ package output
 import (
 	"fmt"
 
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 )
 
 type Output interface {

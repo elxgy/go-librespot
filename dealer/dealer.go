@@ -11,7 +11,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/coder/websocket"
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 )
 
 const (

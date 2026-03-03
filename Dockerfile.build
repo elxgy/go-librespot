@@ -50,4 +50,4 @@ ENV CGO_ENABLED=1 PKG_CONFIG_PATH="/build/vcpkg_installed/$TRIPLET/lib/pkgconfig
     GOCACHE=/src/.gocache/go-build GOMODCACHE=/src/.gocache/mod \
     VERSION="$VERSION"
 
-CMD [ "/bin/sh", "-c", "go build -o ./go-librespot -a -ldflags \"-s -w -X github.com/devgianlu/go-librespot.version=$VERSION\" ./cmd/daemon" ]
+CMD [ "/bin/sh", "-c", "go build -o ./go-librespot -a -ldflags \"-s -w -X github.com/elxgy/go-librespot.version=$VERSION\" ./cmd/daemon" ]

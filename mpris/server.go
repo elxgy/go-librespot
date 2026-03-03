@@ -7,8 +7,8 @@ import (
 	"errors"
 	"strings"
 
-	librespot "github.com/devgianlu/go-librespot"
-	"github.com/devgianlu/go-librespot/proto/spotify/metadata"
+	librespot "github.com/elxgy/go-librespot"
+	"github.com/elxgy/go-librespot/proto/spotify/metadata"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/prop"
 )

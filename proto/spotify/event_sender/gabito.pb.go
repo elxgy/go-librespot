@@ -18031,7 +18031,7 @@ const file_spotify_event_sender_gabito_proto_rawDesc = "" +
 	"\f_decision_idB\x0e\n" +
 	"\f_playback_idB\x1b\n" +
 	"\x19_play_context_decision_idB\xd2\x01\n" +
-	"\x18com.spotify.event_senderB\vGabitoProtoP\x01Z<github.com/devgianlu/go-librespot/proto/spotify/event_sender\xa2\x02\x03SEX\xaa\x02\x13Spotify.EventSender\xca\x02\x13Spotify\\EventSender\xe2\x02\x1fSpotify\\EventSender\\GPBMetadata\xea\x02\x14Spotify::EventSenderb\x06proto3"
+	"\x18com.spotify.event_senderB\vGabitoProtoP\x01Z<github.com/elxgy/go-librespot/proto/spotify/event_sender\xa2\x02\x03SEX\xaa\x02\x13Spotify.EventSender\xca\x02\x13Spotify\\EventSender\xe2\x02\x1fSpotify\\EventSender\\GPBMetadata\xea\x02\x14Spotify::EventSenderb\x06proto3"
 
 var (
 	file_spotify_event_sender_gabito_proto_rawDescOnce sync.Once

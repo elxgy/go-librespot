@@ -1800,7 +1800,7 @@ const file_spotify_connectstate_player_proto_rawDesc = "" +
 	"\x04NONE\x10\x00\x12\a\n" +
 	"\x03OFF\x10\x01\x12\x06\n" +
 	"\x02ON\x10\x02B\xd6\x01\n" +
-	"\x18com.spotify.connectstateB\vPlayerProtoP\x01Z<github.com/devgianlu/go-librespot/proto/spotify/connectstate\xa2\x02\x03SCX\xaa\x02\x14Spotify.Connectstate\xca\x02\x14Spotify\\Connectstate\xe2\x02 Spotify\\Connectstate\\GPBMetadata\xea\x02\x15Spotify::Connectstateb\x06proto3"
+	"\x18com.spotify.connectstateB\vPlayerProtoP\x01Z<github.com/elxgy/go-librespot/proto/spotify/connectstate\xa2\x02\x03SCX\xaa\x02\x14Spotify.Connectstate\xca\x02\x14Spotify\\Connectstate\xe2\x02 Spotify\\Connectstate\\GPBMetadata\xea\x02\x15Spotify::Connectstateb\x06proto3"
 
 var (
 	file_spotify_connectstate_player_proto_rawDescOnce sync.Once

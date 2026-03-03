@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	librespot "github.com/devgianlu/go-librespot"
-	"github.com/devgianlu/go-librespot/dh"
-	pb "github.com/devgianlu/go-librespot/proto/spotify"
+	librespot "github.com/elxgy/go-librespot"
+	"github.com/elxgy/go-librespot/dh"
+	pb "github.com/elxgy/go-librespot/proto/spotify"
 	"golang.org/x/crypto/pbkdf2"
 	"golang.org/x/exp/slices"
 	"golang.org/x/net/proxy"

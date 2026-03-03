@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 )
 
 const (

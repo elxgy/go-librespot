@@ -15,7 +15,7 @@ import (
 	"time"
 	"unsafe"
 
-	librespot "github.com/devgianlu/go-librespot"
+	librespot "github.com/elxgy/go-librespot"
 )
 
 const (
