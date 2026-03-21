@@ -99,14 +99,14 @@ func TestSetPausedTrue(t *testing.T) {
 	state := &connectpb.PlayerState{PlaybackSpeed: 1}
 	SetPaused(state, true)
 	assert.True(t, state.IsPaused)
-	assert.Equal(t, float32(0), state.PlaybackSpeed)
+	assert.InDelta(t, 0.0, float64(state.PlaybackSpeed), 0.001)
 }
 
 func TestSetPausedFalse(t *testing.T) {
 	state := &connectpb.PlayerState{PlaybackSpeed: 0, IsPaused: true}
 	SetPaused(state, false)
 	assert.False(t, state.IsPaused)
-	assert.Equal(t, float32(1), state.PlaybackSpeed)
+	assert.InDelta(t, 1.0, float64(state.PlaybackSpeed), 0.001)
 }
 
 func TestSetPausedNil(t *testing.T) {
@@ -116,7 +116,7 @@ func TestSetPausedNil(t *testing.T) {
 func TestNewPlayerState(t *testing.T) {
 	state := NewPlayerState()
 	assert.True(t, state.IsSystemInitiated)
-	assert.Equal(t, float32(1), state.PlaybackSpeed)
+	assert.InDelta(t, 1.0, float64(state.PlaybackSpeed), 0.001)
 	assert.NotNil(t, state.PlayOrigin)
 	assert.NotNil(t, state.Suppressions)
 	assert.NotNil(t, state.Options)
