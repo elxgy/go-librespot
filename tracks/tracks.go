@@ -478,11 +478,19 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 
 	} else {
 		// Deshuffle: reset playback order to identity (original context order)
-		// The pagedList was NEVER mutated, so this is trivially correct.
+		// Save current track's context index so playbackPos stays consistent.
+		currentCtxIdx := -1
+		if tl.playbackPos >= 0 && tl.playbackPos < len(tl.playbackOrder) {
+			currentCtxIdx = tl.playbackOrder[tl.playbackPos]
+		}
 		if tl.playbackOrder != nil {
 			for i := range tl.playbackOrder {
 				tl.playbackOrder[i] = i
 			}
+		}
+		// In identity order, position == context index
+		if currentCtxIdx >= 0 && currentCtxIdx < len(tl.playbackOrder) {
+			tl.playbackPos = currentCtxIdx
 		}
 
 		tl.shuffled = false
