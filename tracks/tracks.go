@@ -455,7 +455,6 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 	}
 
 	if shuffle {
-		// Load all pages so we have the full playback order
 		if err := tl.ensurePlaybackOrder(ctx); err != nil {
 			return fmt.Errorf("failed loading tracks for shuffle: %w", err)
 		}
@@ -463,23 +462,14 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 		seed := rand.Uint64() + 1
 		rnd := rand.New(rand.NewSource(seed))
 
-		if tl.playbackPos > 0 {
-			// Partial shuffle: keep the current track at playbackPos fixed,
-			// shuffle only the tracks AFTER it (upcoming portion).
-			// playbackOrder[:playbackPos+1] stays as-is (already played + current)
-			// playbackOrder[playbackPos+1:] gets shuffled
-			upcoming := tl.playbackOrder[tl.playbackPos+1:]
-			for i := len(upcoming) - 1; i > 0; i-- {
-				j := rnd.Intn(i + 1)
-				upcoming[i], upcoming[j] = upcoming[j], upcoming[i]
-			}
-		} else {
-			// Full shuffle: shuffle everything. No track is pinned.
-			// playbackPos stays 0 — the first track in the shuffled order is now current.
-			for i := len(tl.playbackOrder) - 1; i > 0; i-- {
-				j := rnd.Intn(i + 1)
-				tl.playbackOrder[i], tl.playbackOrder[j] = tl.playbackOrder[j], tl.playbackOrder[i]
-			}
+		// Always shuffle only tracks AFTER the current position.
+		// playbackOrder[:playbackPos+1] stays as-is (already played + current).
+		// This ensures skipped tracks never reappear — once a track passes playbackPos,
+		// it's in the played zone and can't return regardless of subsequent shuffles.
+		upcoming := tl.playbackOrder[tl.playbackPos+1:]
+		for i := len(upcoming) - 1; i > 0; i-- {
+			j := rnd.Intn(i + 1)
+			upcoming[i], upcoming[j] = upcoming[j], upcoming[i]
 		}
 
 		tl.shuffled = true
