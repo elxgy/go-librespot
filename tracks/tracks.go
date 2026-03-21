@@ -160,6 +160,49 @@ func (tl *List) maxTracks() int {
 	return tl.maxTracksInContext
 }
 
+// UpcomingTracks returns the next n tracks from the playback order after the current track.
+// This is the authoritative "up next" queue — no derivation, no caching, no seen maps.
+// Queue items (AddToQueue/SetQueue) are returned first, then playback order tracks.
+func (tl *List) UpcomingTracks(ctx context.Context, n int) []*connectpb.ProvidedTrack {
+	if n <= 0 {
+		return nil
+	}
+
+	maxT := n
+	tracks := make([]*connectpb.ProvidedTrack, 0, maxT)
+
+	// Queue items first
+	if len(tl.queue) > 0 {
+		queue := tl.queue
+		if tl.playingQueue {
+			queue = queue[1:] // skip currently-playing queue item
+		}
+		for i := 0; i < len(queue) && len(tracks) < maxT; i++ {
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), queue[i]))
+		}
+		if len(tracks) >= maxT {
+			return tracks
+		}
+	}
+
+	// Playback order tracks after current position
+	if tl.playbackOrder != nil && tl.playbackPos >= 0 {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+
+		for i := tl.playbackPos + 1; i < len(tl.playbackOrder) && len(tracks) < maxT; i++ {
+			ctxIdx := tl.playbackOrder[i]
+			track, err := tl.contextTrackAt(ctx, ctxIdx)
+			if err != nil {
+				break
+			}
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), track))
+		}
+	}
+
+	return tracks
+}
+
 func (tl *List) PrevTracks() []*connectpb.ProvidedTrack {
 	maxT := tl.maxTracks()
 
