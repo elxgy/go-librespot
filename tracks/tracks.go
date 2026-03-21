@@ -474,28 +474,12 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 				upcoming[i], upcoming[j] = upcoming[j], upcoming[i]
 			}
 		} else {
-			// Full shuffle: shuffle everything, then find the first track again
-			// so playbackPos=0 stays on the same track
-			originalCtxIdx := -1
-			if len(tl.playbackOrder) > 0 {
-				originalCtxIdx = tl.playbackOrder[0]
-			}
-
+			// Full shuffle: shuffle everything. No track is pinned.
+			// playbackPos stays 0 — the first track in the shuffled order is now current.
 			for i := len(tl.playbackOrder) - 1; i > 0; i-- {
 				j := rnd.Intn(i + 1)
 				tl.playbackOrder[i], tl.playbackOrder[j] = tl.playbackOrder[j], tl.playbackOrder[i]
 			}
-
-			// Restore current track to position 0
-			if originalCtxIdx >= 0 {
-				for i, ctxIdx := range tl.playbackOrder {
-					if ctxIdx == originalCtxIdx {
-						tl.playbackOrder[0], tl.playbackOrder[i] = tl.playbackOrder[i], tl.playbackOrder[0]
-						break
-					}
-				}
-			}
-			tl.playbackPos = 0
 		}
 
 		tl.shuffled = true
