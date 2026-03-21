@@ -417,39 +417,42 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 			return fmt.Errorf("failed loading tracks for shuffle: %w", err)
 		}
 
-		// Save the current track's context index so we can find it after shuffle
-		originalCtxIdx := -1
-		if tl.playbackPos >= 0 && tl.playbackPos < len(tl.playbackOrder) {
-			originalCtxIdx = tl.playbackOrder[tl.playbackPos]
-		}
-
 		seed := rand.Uint64() + 1
 		rnd := rand.New(rand.NewSource(seed))
 
 		if tl.playbackPos > 0 {
-			// Partial shuffle: keep tracks before playbackPos in their current order
-			// (already played), shuffle only the unplayed portion
-			unplayed := tl.playbackOrder[tl.playbackPos:]
-			for i := len(unplayed) - 1; i > 0; i-- {
+			// Partial shuffle: keep the current track at playbackPos fixed,
+			// shuffle only the tracks AFTER it (upcoming portion).
+			// playbackOrder[:playbackPos+1] stays as-is (already played + current)
+			// playbackOrder[playbackPos+1:] gets shuffled
+			upcoming := tl.playbackOrder[tl.playbackPos+1:]
+			for i := len(upcoming) - 1; i > 0; i-- {
 				j := rnd.Intn(i + 1)
-				unplayed[i], unplayed[j] = unplayed[j], unplayed[i]
+				upcoming[i], upcoming[j] = upcoming[j], upcoming[i]
 			}
 		} else {
-			// Full shuffle: shuffle entire playback order
+			// Full shuffle: shuffle everything, then find the first track again
+			// so playbackPos=0 stays on the same track
+			originalCtxIdx := -1
+			if len(tl.playbackOrder) > 0 {
+				originalCtxIdx = tl.playbackOrder[0]
+			}
+
 			for i := len(tl.playbackOrder) - 1; i > 0; i-- {
 				j := rnd.Intn(i + 1)
 				tl.playbackOrder[i], tl.playbackOrder[j] = tl.playbackOrder[j], tl.playbackOrder[i]
 			}
-		}
 
-		// Adjust playbackPos so the current track stays the same after shuffle
-		if originalCtxIdx >= 0 {
-			for i, ctxIdx := range tl.playbackOrder {
-				if ctxIdx == originalCtxIdx {
-					tl.playbackPos = i
-					break
+			// Restore current track to position 0
+			if originalCtxIdx >= 0 {
+				for i, ctxIdx := range tl.playbackOrder {
+					if ctxIdx == originalCtxIdx {
+						tl.playbackOrder[0], tl.playbackOrder[i] = tl.playbackOrder[i], tl.playbackOrder[0]
+						break
+					}
 				}
 			}
+			tl.playbackPos = 0
 		}
 
 		tl.shuffled = true
