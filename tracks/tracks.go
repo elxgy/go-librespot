@@ -340,8 +340,10 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 			tl.tracks.shuffle(rand.New(rand.NewSource(tl.shuffleSeed)))
 		}
 
-		// move current track to position 0
-		if tl.tracks.pos > 0 {
+		// move current track to position 0 (full shuffle only)
+		// for partial shuffle, keep current track at its position so
+		// PrevTracks() correctly reflects already-played tracks
+		if tl.tracks.pos > 0 && tl.shuffleStartPos == 0 {
 			tl.shuffleKeep = tl.tracks.pos
 			tl.tracks.swap(0, tl.tracks.pos)
 		} else {
@@ -369,6 +371,9 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 			}
 
 			tl.shuffled = false
+			tl.shuffleStartPos = 0
+			tl.shuffleSeed = 0
+			tl.shuffleKeep = -1
 			tl.log.Debugf("unshuffled context with seed %d (len: %d, keep: %d, offset: %d)", tl.shuffleSeed, tl.shuffleLen, tl.shuffleKeep, tl.shuffleStartPos)
 			return nil
 		} else {
@@ -383,6 +388,9 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 			}
 
 			tl.shuffled = false
+			tl.shuffleStartPos = 0
+			tl.shuffleSeed = 0
+			tl.shuffleKeep = -1
 			tl.log.Debugf("unshuffled context by fetching pages (len: %d)", tl.tracks.len())
 			return nil
 		}
