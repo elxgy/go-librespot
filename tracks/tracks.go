@@ -3,7 +3,6 @@ package tracks
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	librespot "github.com/elxgy/go-librespot"
@@ -17,12 +16,14 @@ type List struct {
 
 	ctx *spclient.ContextResolver
 
-	shuffled        bool
-	shuffleSeed     uint64
-	shuffleLen      int
-	shuffleKeep     int
-	shuffleStartPos int // index where shuffle begins; tracks before this are "already played"
-	tracks          *pagedList[*connectpb.ContextTrack]
+	shuffled bool
+	tracks   *pagedList[*connectpb.ContextTrack]
+
+	// playbackOrder maps playback positions to context indices in the pagedList.
+	// The pagedList is NEVER mutated by shuffle — it always holds tracks in
+	// original context order. Only playbackOrder changes.
+	playbackOrder []int // playback position → context index
+	playbackPos   int   // current position in playback order (-1 = not started)
 
 	playingQueue       bool
 	queue              []*connectpb.ContextTrack
@@ -40,6 +41,7 @@ func NewTrackListFromContext(ctx context.Context, log_ librespot.Logger, sp *spc
 	tl.log.Debugf("resolved context of %s", tl.ctx.Type())
 
 	tl.tracks = newPagedList[*connectpb.ContextTrack](tl.log, tl.ctx)
+	tl.playbackPos = -1
 	if maxTracksInContext <= 0 {
 		maxTracksInContext = MaxTracksInContext
 	}
@@ -51,59 +53,101 @@ func (tl *List) Metadata() map[string]string {
 	return tl.ctx.Metadata()
 }
 
-// ShuffleStartPos returns the index where the shuffle portion begins.
-// Tracks before this index are "already played" and were not shuffled.
-// Returns 0 when not shuffled or when the entire list was shuffled.
+// ShuffleStartPos returns playbackPos — the boundary between played and unplayed tracks.
+// Tracks before this index in playbackOrder are "already played."
 func (tl *List) ShuffleStartPos() int {
 	if !tl.shuffled {
 		return 0
 	}
-	return tl.shuffleStartPos
+	return tl.playbackPos
+}
+
+// ensurePlaybackOrder loads all pages and builds the identity playback order if not yet built.
+func (tl *List) ensurePlaybackOrder(ctx context.Context) error {
+	if tl.playbackOrder != nil && tl.tracks.len() == len(tl.playbackOrder) {
+		return nil
+	}
+
+	iter := tl.tracks.iterStart()
+	for iter.next(ctx) {
+		// consume all pages
+	}
+	if err := iter.error(); err != nil {
+		return fmt.Errorf("failed fetching all tracks: %w", err)
+	}
+
+	tl.buildPlaybackOrder()
+	return nil
+}
+
+// buildPlaybackOrder (re)builds the identity playback order for all currently loaded tracks.
+func (tl *List) buildPlaybackOrder() {
+	n := tl.tracks.len()
+	tl.playbackOrder = make([]int, n)
+	for i := 0; i < n; i++ {
+		tl.playbackOrder[i] = i
+	}
+}
+
+// extendPlaybackOrder extends the playback order for newly loaded pages without rebuilding.
+func (tl *List) extendPlaybackOrder() {
+	n := tl.tracks.len()
+	if tl.playbackOrder == nil {
+		tl.playbackOrder = make([]int, 0, n)
+	}
+	for i := len(tl.playbackOrder); i < n; i++ {
+		tl.playbackOrder = append(tl.playbackOrder, i)
+	}
+}
+
+// contextTrackAt returns the track at the given context index, fetching pages if needed.
+func (tl *List) contextTrackAt(ctx context.Context, ctxIdx int) (*connectpb.ContextTrack, error) {
+	for tl.tracks.len() <= ctxIdx {
+		if _, err := tl.tracks.fetchNextPage(ctx); err != nil {
+			return nil, err
+		}
+		tl.extendPlaybackOrder()
+	}
+	return tl.tracks.list[ctxIdx].item, nil
 }
 
 func (tl *List) TrySeek(ctx context.Context, f func(track *connectpb.ContextTrack) bool) error {
 	if err := tl.Seek(ctx, f); err != nil {
 		tl.log.WithError(err).Warnf("failed seeking to track in context %s", tl.ctx.Uri())
 
-		err = tl.tracks.moveStart(ctx)
-		if err != nil {
-			return err
-		}
+		tl.tracks.clear()
+		tl.playbackOrder = nil
+		tl.playbackPos = -1
 	}
 
 	return nil
 }
 
 func (tl *List) Seek(ctx context.Context, f func(*connectpb.ContextTrack) bool) error {
-	iter := tl.tracks.iterStart()
-	for iter.next(ctx) {
-		curr := iter.get()
-		if f(curr.item) {
-			tl.tracks.move(iter)
-			return nil
-		}
+	if err := tl.ensurePlaybackOrder(ctx); err != nil {
+		return fmt.Errorf("failed loading tracks for seek: %w", err)
 	}
 
-	if err := iter.error(); err != nil {
-		return fmt.Errorf("failed fetching tracks for seek: %w", err)
+	for i, ctxIdx := range tl.playbackOrder {
+		if f(tl.tracks.list[ctxIdx].item) {
+			tl.playbackPos = i
+			return nil
+		}
 	}
 
 	return fmt.Errorf("could not find track")
 }
 
 func (tl *List) AllTracks(ctx context.Context) []*connectpb.ProvidedTrack {
-	tracks := make([]*connectpb.ProvidedTrack, 0, tl.tracks.len())
-
-	iter := tl.tracks.iterStart()
-	for iter.next(ctx) {
-		curr := iter.get()
-		tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), curr.item))
+	if err := tl.ensurePlaybackOrder(ctx); err != nil {
+		tl.log.WithError(err).Error("failed loading all tracks")
+		return nil
 	}
 
-	if err := iter.error(); err != nil {
-		tl.log.WithError(err).Error("failed fetching all tracks")
+	tracks := make([]*connectpb.ProvidedTrack, 0, len(tl.playbackOrder))
+	for _, ctxIdx := range tl.playbackOrder {
+		tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), tl.tracks.list[ctxIdx].item))
 	}
-
 	return tracks
 }
 
@@ -118,20 +162,23 @@ func (tl *List) maxTracks() int {
 
 func (tl *List) PrevTracks() []*connectpb.ProvidedTrack {
 	maxT := tl.maxTracks()
-	tracks := make([]*connectpb.ProvidedTrack, 0, maxT)
 
-	iter := tl.tracks.iterHere()
-	for len(tracks) < maxT && iter.prev() {
-		curr := iter.get()
-		tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), curr.item))
+	if tl.playingQueue || tl.playbackPos < 0 || tl.playbackOrder == nil {
+		return nil
 	}
 
-	if err := iter.error(); err != nil {
-		tl.log.WithError(err).Error("failed fetching prev tracks")
-	}
+	count := min(tl.playbackPos, maxT)
+	tracks := make([]*connectpb.ProvidedTrack, 0, count)
 
-	// Tracks were added in reverse order. Fix this by reversing them again.
-	slices.Reverse(tracks)
+	for i := tl.playbackPos - count; i < tl.playbackPos; i++ {
+		if i < 0 || i >= len(tl.playbackOrder) {
+			continue
+		}
+		ctxIdx := tl.playbackOrder[i]
+		if ctxIdx < tl.tracks.len() {
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), tl.tracks.list[ctxIdx].item))
+		}
+	}
 
 	return tracks
 }
@@ -164,25 +211,33 @@ func (tl *List) NextTracks(ctx context.Context, nextHint []*connectpb.ContextTra
 				break
 			}
 
-			// if one moves one track out of the queue into the "coming next" tracks, it is unqueued, because queued items
-			// are only the ones with the green symbol. if is_queued remains set, spotify will remove this track from the
-			// coming up section entirely
 			delete(curr.Metadata, "is_queued")
 			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), curr))
 		}
 	} else {
-		// Do not waste too much time fetching next tracks. Even if we do not fetch everything in time,
-		// the playback will continue anyway.
+		// Use playback order to get next tracks
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 
-		iter := tl.tracks.iterHere()
-		for len(tracks) < maxT && iter.next(ctx) {
-			curr := iter.get()
-			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), curr.item))
-		}
-		if err := iter.error(); err != nil {
-			tl.log.WithError(err).Error("failed fetching next tracks")
+		if tl.playbackOrder != nil && tl.playbackPos >= 0 {
+			for i := tl.playbackPos + 1; i < len(tl.playbackOrder) && len(tracks) < maxT; i++ {
+				ctxIdx := tl.playbackOrder[i]
+				track, err := tl.contextTrackAt(ctx, ctxIdx)
+				if err != nil {
+					break
+				}
+				tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), track))
+			}
+		} else {
+			// Playback order not built yet — fall back to context-order iteration
+			iter := tl.tracks.iterHere()
+			for len(tracks) < maxT && iter.next(ctx) {
+				curr := iter.get()
+				tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), curr.item))
+			}
+			if err := iter.error(); err != nil {
+				tl.log.WithError(err).Error("failed fetching next tracks")
+			}
 		}
 	}
 
@@ -194,8 +249,16 @@ func (tl *List) Index() *connectpb.ContextIndex {
 		return &connectpb.ContextIndex{}
 	}
 
-	curr := tl.tracks.get()
-	return &connectpb.ContextIndex{Page: uint32(curr.pageIdx), Track: uint32(curr.itemIdx)}
+	if tl.playbackPos < 0 || tl.playbackOrder == nil || tl.playbackPos >= len(tl.playbackOrder) {
+		return &connectpb.ContextIndex{}
+	}
+
+	ctxIdx := tl.playbackOrder[tl.playbackPos]
+	if ctxIdx >= 0 && ctxIdx < tl.tracks.len() {
+		curr := tl.tracks.list[ctxIdx]
+		return &connectpb.ContextIndex{Page: uint32(curr.pageIdx), Track: uint32(curr.itemIdx)}
+	}
+	return &connectpb.ContextIndex{}
 }
 
 func (tl *List) current() *connectpb.ContextTrack {
@@ -203,21 +266,36 @@ func (tl *List) current() *connectpb.ContextTrack {
 		return tl.queue[0]
 	}
 
-	curr := tl.tracks.get()
-	return curr.item
+	if tl.playbackPos < 0 || tl.playbackOrder == nil || tl.playbackPos >= len(tl.playbackOrder) {
+		return nil
+	}
+
+	ctxIdx := tl.playbackOrder[tl.playbackPos]
+	if ctxIdx < tl.tracks.len() {
+		return tl.tracks.list[ctxIdx].item
+	}
+	return nil
 }
 
 func (tl *List) CurrentTrack() *connectpb.ProvidedTrack {
 	item := tl.current()
+	if item == nil {
+		return nil
+	}
 	return librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), item)
 }
 
 func (tl *List) GoStart(ctx context.Context) bool {
-	if err := tl.tracks.moveStart(ctx); err != nil {
-		tl.log.WithError(err).Error("failed going to start")
+	if err := tl.ensurePlaybackOrder(ctx); err != nil {
+		tl.log.WithError(err).Error("failed building playback order for go start")
 		return false
 	}
 
+	if len(tl.playbackOrder) == 0 {
+		return false
+	}
+
+	tl.playbackPos = 0
 	return true
 }
 
@@ -228,6 +306,20 @@ func (tl *List) PeekNext(ctx context.Context) *connectpb.ContextTrack {
 		return tl.queue[0]
 	}
 
+	// Look ahead in playback order
+	if tl.playbackOrder != nil && tl.playbackPos >= 0 {
+		nextPos := tl.playbackPos + 1
+		if nextPos < len(tl.playbackOrder) {
+			ctxIdx := tl.playbackOrder[nextPos]
+			track, err := tl.contextTrackAt(ctx, ctxIdx)
+			if err == nil {
+				return track
+			}
+		}
+		return nil
+	}
+
+	// Fallback: context order iteration
 	iter := tl.tracks.iterHere()
 	if iter.next(ctx) {
 		return iter.get().item
@@ -248,32 +340,38 @@ func (tl *List) GoNext(ctx context.Context) bool {
 
 	tl.playingQueue = false
 
-	iter := tl.tracks.iterHere()
-	if iter.next(ctx) {
-		tl.tracks.move(iter)
+	// Extend playback order for any newly loaded pages
+	tl.extendPlaybackOrder()
+
+	tl.playbackPos++
+
+	if tl.playbackOrder != nil && tl.playbackPos < len(tl.playbackOrder) {
 		return true
 	}
 
-	if err := iter.error(); err != nil {
-		tl.log.WithError(err).Error("failed going to next track")
+	// Need more tracks — try fetching next page
+	if _, err := tl.tracks.fetchNextPage(ctx); err == nil {
+		tl.extendPlaybackOrder()
+		if tl.playbackPos < len(tl.playbackOrder) {
+			return true
+		}
 	}
 
+	// No more tracks
+	tl.playbackPos = len(tl.playbackOrder) - 1
 	return false
 }
 
 func (tl *List) GoPrev() bool {
 	if tl.playingQueue {
 		tl.playingQueue = false
+		// Don't change playbackPos — it was never advanced during queue playback
+		return tl.playbackPos >= 0
 	}
 
-	iter := tl.tracks.iterHere()
-	if iter.prev() {
-		tl.tracks.move(iter)
+	if tl.playbackPos > 0 {
+		tl.playbackPos--
 		return true
-	}
-
-	if err := iter.error(); err != nil {
-		tl.log.WithError(err).Error("failed going to previous track")
 	}
 
 	return false
@@ -295,10 +393,7 @@ func (tl *List) SetQueue(_ []*connectpb.ContextTrack, next []*connectpb.ContextT
 		tl.queue = nil
 	}
 
-	// I don't know if this good enough, but it surely saves us a lot of complicated code
 	for _, track := range next {
-		// the queued tracks will always be the first tracks in the next list, so if we meet the first "non-queue",
-		// 	the queue definitely ended
 		if queued := track.Metadata["is_queued"]; queued != "true" {
 			break
 		}
@@ -317,82 +412,45 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 	}
 
 	if shuffle {
-		// fetch all tracks
-		iter := tl.tracks.iterStart()
-		for iter.next(ctx) {
-			// TODO: check that we do not seek forever
-		}
-		if err := iter.error(); err != nil {
-			tl.log.WithError(err).Error("failed fetching all tracks")
+		// Load all pages so we have the full playback order
+		if err := tl.ensurePlaybackOrder(ctx); err != nil {
+			return fmt.Errorf("failed loading tracks for shuffle: %w", err)
 		}
 
-		currentPos := tl.tracks.pos
-		tl.shuffleSeed = rand.Uint64() + 1
+		seed := rand.Uint64() + 1
+		rnd := rand.New(rand.NewSource(seed))
 
-		if currentPos > 0 {
-			// partial shuffle: only shuffle tracks from current position onward
-			// tracks before currentPos are "already played" and stay in place
-			tl.shuffleStartPos = currentPos
-			tl.tracks.shuffleFromOffset(rand.New(rand.NewSource(tl.shuffleSeed)), currentPos)
+		if tl.playbackPos > 0 {
+			// Partial shuffle: keep tracks before playbackPos in their current order
+			// (already played), shuffle only the unplayed portion
+			unplayed := tl.playbackOrder[tl.playbackPos:]
+			for i := len(unplayed) - 1; i > 0; i-- {
+				j := rnd.Intn(i + 1)
+				unplayed[i], unplayed[j] = unplayed[j], unplayed[i]
+			}
 		} else {
-			// at the start: shuffle the entire list
-			tl.shuffleStartPos = 0
-			tl.tracks.shuffle(rand.New(rand.NewSource(tl.shuffleSeed)))
+			// Full shuffle: shuffle entire playback order
+			for i := len(tl.playbackOrder) - 1; i > 0; i-- {
+				j := rnd.Intn(i + 1)
+				tl.playbackOrder[i], tl.playbackOrder[j] = tl.playbackOrder[j], tl.playbackOrder[i]
+			}
 		}
-
-		// move current track to position 0 (full shuffle only)
-		// for partial shuffle, keep current track at its position so
-		// PrevTracks() correctly reflects already-played tracks
-		if tl.tracks.pos > 0 && tl.shuffleStartPos == 0 {
-			tl.shuffleKeep = tl.tracks.pos
-			tl.tracks.swap(0, tl.tracks.pos)
-		} else {
-			tl.shuffleKeep = -1
-		}
-
-		// save tracks list length
-		tl.shuffleLen = tl.tracks.len()
 
 		tl.shuffled = true
-		tl.log.Debugf("shuffled context with seed %d (len: %d, keep: %d, offset: %d)", tl.shuffleSeed, tl.shuffleLen, tl.shuffleKeep, tl.shuffleStartPos)
+		tl.log.Debugf("shuffled playback order (len: %d, pos: %d)", len(tl.playbackOrder), tl.playbackPos)
 		return nil
+
 	} else {
-		if tl.shuffleSeed != 0 && tl.tracks.len() == tl.shuffleLen {
-			// restore track that was originally moved to first
-			if tl.shuffleKeep > 0 {
-				tl.tracks.swap(0, tl.shuffleKeep)
+		// Deshuffle: reset playback order to identity (original context order)
+		// The pagedList was NEVER mutated, so this is trivially correct.
+		if tl.playbackOrder != nil {
+			for i := range tl.playbackOrder {
+				tl.playbackOrder[i] = i
 			}
-
-			// partial unshuffle: only reverse the shuffled portion
-			if tl.shuffleStartPos > 0 {
-				tl.tracks.unshuffleFromOffset(rand.New(rand.NewSource(tl.shuffleSeed)), tl.shuffleStartPos)
-			} else {
-				tl.tracks.unshuffle(rand.New(rand.NewSource(tl.shuffleSeed)))
-			}
-
-			tl.shuffled = false
-			tl.shuffleStartPos = 0
-			tl.shuffleSeed = 0
-			tl.shuffleKeep = -1
-			tl.log.Debugf("unshuffled context with seed %d (len: %d, keep: %d, offset: %d)", tl.shuffleSeed, tl.shuffleLen, tl.shuffleKeep, tl.shuffleStartPos)
-			return nil
-		} else {
-			// fallback: context changed or track list length differs
-			// this should rarely happen with partial shuffle since the
-			// seed+length check is more robust when only the unplayed portion is shuffled
-			currentTrack := tl.current()
-
-			tl.tracks.clear()
-			if err := tl.Seek(ctx, ContextTrackComparator(tl.ctx.Type(), currentTrack)); err != nil {
-				return fmt.Errorf("failed seeking to current track: %w", err)
-			}
-
-			tl.shuffled = false
-			tl.shuffleStartPos = 0
-			tl.shuffleSeed = 0
-			tl.shuffleKeep = -1
-			tl.log.Debugf("unshuffled context by fetching pages (len: %d)", tl.tracks.len())
-			return nil
 		}
+
+		tl.shuffled = false
+		tl.log.Debugf("unshuffled playback order (pos: %d)", tl.playbackPos)
+		return nil
 	}
 }
