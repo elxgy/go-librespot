@@ -417,6 +417,12 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 			return fmt.Errorf("failed loading tracks for shuffle: %w", err)
 		}
 
+		// Save the current track's context index so we can find it after shuffle
+		originalCtxIdx := -1
+		if tl.playbackPos >= 0 && tl.playbackPos < len(tl.playbackOrder) {
+			originalCtxIdx = tl.playbackOrder[tl.playbackPos]
+		}
+
 		seed := rand.Uint64() + 1
 		rnd := rand.New(rand.NewSource(seed))
 
@@ -433,6 +439,16 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 			for i := len(tl.playbackOrder) - 1; i > 0; i-- {
 				j := rnd.Intn(i + 1)
 				tl.playbackOrder[i], tl.playbackOrder[j] = tl.playbackOrder[j], tl.playbackOrder[i]
+			}
+		}
+
+		// Adjust playbackPos so the current track stays the same after shuffle
+		if originalCtxIdx >= 0 {
+			for i, ctxIdx := range tl.playbackOrder {
+				if ctxIdx == originalCtxIdx {
+					tl.playbackPos = i
+					break
+				}
 			}
 		}
 
