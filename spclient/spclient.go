@@ -493,3 +493,45 @@ func (c *Spclient) PlayPlayRequest(ctx context.Context, fileId []byte, reqProto 
 
 	return &respProto, nil
 }
+
+func (c *Spclient) ResolveTrackOrEpisodeMetadata(ctx context.Context, uri string) (name, artist string, durationMS int, err error) {
+	spotId, err := librespot.SpotifyIdFromUri(uri)
+	if err != nil {
+		return "", "", 0, err
+	}
+	id := *spotId
+	switch id.Type() {
+	case librespot.SpotifyIdTypeTrack:
+		var track metadatapb.Track
+		if err := c.ExtendedMetadataSimple(ctx, id, extmetadatapb.ExtensionKind_TRACK_V4, &track); err != nil {
+			return "", "", 0, err
+		}
+		if track.Name != nil {
+			name = *track.Name
+		}
+		if len(track.Artist) > 0 && track.Artist[0].Name != nil {
+			artist = *track.Artist[0].Name
+		}
+		if track.Duration != nil {
+			durationMS = int(*track.Duration)
+		}
+		return name, artist, durationMS, nil
+	case librespot.SpotifyIdTypeEpisode:
+		var ep metadatapb.Episode
+		if err := c.ExtendedMetadataSimple(ctx, id, extmetadatapb.ExtensionKind_EPISODE_V4, &ep); err != nil {
+			return "", "", 0, err
+		}
+		if ep.Name != nil {
+			name = *ep.Name
+		}
+		if ep.Show != nil && ep.Show.Name != nil {
+			artist = *ep.Show.Name
+		}
+		if ep.Duration != nil {
+			durationMS = int(*ep.Duration)
+		}
+		return name, artist, durationMS, nil
+	default:
+		return "", "", 0, fmt.Errorf("unsupported type for metadata: %s", id.Type())
+	}
+}

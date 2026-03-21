@@ -17,15 +17,16 @@ type List struct {
 
 	ctx *spclient.ContextResolver
 
-	shuffled    bool
-	shuffleSeed uint64
-	shuffleLen  int
-	shuffleKeep int
-	tracks      *pagedList[*connectpb.ContextTrack]
+	shuffled        bool
+	shuffleSeed     uint64
+	shuffleLen      int
+	shuffleKeep     int
+	shuffleStartPos int // index where shuffle begins; tracks before this are "already played"
+	tracks          *pagedList[*connectpb.ContextTrack]
 
-	playingQueue        bool
-	queue               []*connectpb.ContextTrack
-	maxTracksInContext  int
+	playingQueue       bool
+	queue              []*connectpb.ContextTrack
+	maxTracksInContext int
 }
 
 func NewTrackListFromContext(ctx context.Context, log_ librespot.Logger, sp *spclient.Spclient, spotCtx *connectpb.Context, maxTracksInContext int) (_ *List, err error) {
@@ -48,6 +49,16 @@ func NewTrackListFromContext(ctx context.Context, log_ librespot.Logger, sp *spc
 
 func (tl *List) Metadata() map[string]string {
 	return tl.ctx.Metadata()
+}
+
+// ShuffleStartPos returns the index where the shuffle portion begins.
+// Tracks before this index are "already played" and were not shuffled.
+// Returns 0 when not shuffled or when the entire list was shuffled.
+func (tl *List) ShuffleStartPos() int {
+	if !tl.shuffled {
+		return 0
+	}
+	return tl.shuffleStartPos
 }
 
 func (tl *List) TrySeek(ctx context.Context, f func(track *connectpb.ContextTrack) bool) error {
@@ -315,11 +326,21 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 			tl.log.WithError(err).Error("failed fetching all tracks")
 		}
 
-		// generate new seed and use it to shuffle
+		currentPos := tl.tracks.pos
 		tl.shuffleSeed = rand.Uint64() + 1
-		tl.tracks.shuffle(rand.New(rand.NewSource(tl.shuffleSeed)))
 
-		// move current track to first
+		if currentPos > 0 {
+			// partial shuffle: only shuffle tracks from current position onward
+			// tracks before currentPos are "already played" and stay in place
+			tl.shuffleStartPos = currentPos
+			tl.tracks.shuffleFromOffset(rand.New(rand.NewSource(tl.shuffleSeed)), currentPos)
+		} else {
+			// at the start: shuffle the entire list
+			tl.shuffleStartPos = 0
+			tl.tracks.shuffle(rand.New(rand.NewSource(tl.shuffleSeed)))
+		}
+
+		// move current track to position 0
 		if tl.tracks.pos > 0 {
 			tl.shuffleKeep = tl.tracks.pos
 			tl.tracks.swap(0, tl.tracks.pos)
@@ -331,7 +352,7 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 		tl.shuffleLen = tl.tracks.len()
 
 		tl.shuffled = true
-		tl.log.Debugf("shuffled context with seed %d (len: %d, keep: %d)", tl.shuffleSeed, tl.shuffleLen, tl.shuffleKeep)
+		tl.log.Debugf("shuffled context with seed %d (len: %d, keep: %d, offset: %d)", tl.shuffleSeed, tl.shuffleLen, tl.shuffleKeep, tl.shuffleStartPos)
 		return nil
 	} else {
 		if tl.shuffleSeed != 0 && tl.tracks.len() == tl.shuffleLen {
@@ -340,17 +361,22 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 				tl.tracks.swap(0, tl.shuffleKeep)
 			}
 
-			// we shuffled this, so we must be able to unshuffle it
-			tl.tracks.unshuffle(rand.New(rand.NewSource(tl.shuffleSeed)))
+			// partial unshuffle: only reverse the shuffled portion
+			if tl.shuffleStartPos > 0 {
+				tl.tracks.unshuffleFromOffset(rand.New(rand.NewSource(tl.shuffleSeed)), tl.shuffleStartPos)
+			} else {
+				tl.tracks.unshuffle(rand.New(rand.NewSource(tl.shuffleSeed)))
+			}
 
 			tl.shuffled = false
-			tl.log.Debugf("unshuffled context with seed %d (len: %d, keep: %d)", tl.shuffleSeed, tl.shuffleLen, tl.shuffleKeep)
+			tl.log.Debugf("unshuffled context with seed %d (len: %d, keep: %d, offset: %d)", tl.shuffleSeed, tl.shuffleLen, tl.shuffleKeep, tl.shuffleStartPos)
 			return nil
 		} else {
-			// remember current track
+			// fallback: context changed or track list length differs
+			// this should rarely happen with partial shuffle since the
+			// seed+length check is more robust when only the unplayed portion is shuffled
 			currentTrack := tl.current()
 
-			// clear tracks and seek to the current track
 			tl.tracks.clear()
 			if err := tl.Seek(ctx, ContextTrackComparator(tl.ctx.Type(), currentTrack)); err != nil {
 				return fmt.Errorf("failed seeking to current track: %w", err)

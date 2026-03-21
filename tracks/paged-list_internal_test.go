@@ -300,6 +300,172 @@ func (suite *PagedListInternalSuite) TestShuffleSingleItem() {
 	suite.Equal(42, item.item)
 }
 
+func (suite *PagedListInternalSuite) TestShuffleFromOffsetPreservesPrefix() {
+	suite.resolver.EXPECT().Page(mock.Anything, mock.Anything).RunAndReturn(func(_ context.Context, pageIdx int) ([]int, error) {
+		if pageIdx >= 2 {
+			return nil, io.EOF
+		}
+		l := make([]int, 5)
+		for i := 0; i < len(l); i++ {
+			l[i] = (i + pageIdx*5) * 100
+		}
+		return l, nil
+	})
+
+	// Load 10 items: [0, 100, 200, 300, 400, 500, 600, 700, 800, 900]
+	iter := suite.list.iterStart()
+	for i := 0; i < 10; i++ {
+		suite.True(iter.next(context.Background()))
+	}
+
+	// Move to position 3 (value 300)
+	for i := 0; i < 3; i++ {
+		iter = suite.list.iterStart()
+		for j := 0; j <= i; j++ {
+			iter.next(context.Background())
+		}
+	}
+	iter = suite.list.iterStart()
+	for i := 0; i < 4; i++ {
+		iter.next(context.Background())
+	}
+	suite.list.move(iter)
+
+	item := suite.list.get()
+	suite.Equal(300, item.item)
+
+	// Shuffle from offset 3
+	seed := rand.Uint64() + 1
+	suite.list.shuffleFromOffset(rand.New(rand.NewSource(seed)), 3)
+
+	// Verify tracks before offset are unchanged
+	iter = suite.list.iterStart()
+	for i := 0; i < 3; i++ {
+		suite.True(iter.next(context.Background()))
+		item := iter.get()
+		suite.Equal(i*100, item.item, "prefix track %d should be unchanged", i)
+	}
+
+	// Verify current track is still trackable (pos was tracked through shuffle)
+	item = suite.list.get()
+	suite.Equal(300, item.item)
+}
+
+func (suite *PagedListInternalSuite) TestShuffleFromOffsetUnshuffleRoundTrip() {
+	suite.resolver.EXPECT().Page(mock.Anything, mock.Anything).RunAndReturn(func(_ context.Context, pageIdx int) ([]int, error) {
+		if pageIdx >= 2 {
+			return nil, io.EOF
+		}
+		l := make([]int, 5)
+		for i := 0; i < len(l); i++ {
+			l[i] = (i + pageIdx*5) * 100
+		}
+		return l, nil
+	})
+
+	// Load 10 items
+	iter := suite.list.iterStart()
+	for i := 0; i < 10; i++ {
+		suite.True(iter.next(context.Background()))
+	}
+
+	// Move to position 3
+	iter = suite.list.iterStart()
+	for i := 0; i < 4; i++ {
+		iter.next(context.Background())
+	}
+	suite.list.move(iter)
+
+	seed := rand.Uint64() + 1
+	suite.list.shuffleFromOffset(rand.New(rand.NewSource(seed)), 3)
+
+	// Unshuffle
+	suite.list.unshuffleFromOffset(rand.New(rand.NewSource(seed)), 3)
+
+	// Verify full original order is restored
+	iter = suite.list.iterStart()
+	for i := 0; i < 10; i++ {
+		suite.True(iter.next(context.Background()))
+		item := iter.get()
+		suite.Equal(i*100, item.item, "item %d should be in original order after unshuffle", i)
+	}
+
+	// Verify position is restored
+	item := suite.list.get()
+	suite.Equal(300, item.item)
+}
+
+func (suite *PagedListInternalSuite) TestShuffleFromOffsetOffsetZero() {
+	suite.resolver.EXPECT().Page(mock.Anything, mock.Anything).RunAndReturn(func(_ context.Context, pageIdx int) ([]int, error) {
+		if pageIdx >= 2 {
+			return nil, io.EOF
+		}
+		l := make([]int, 5)
+		for i := 0; i < len(l); i++ {
+			l[i] = (i + pageIdx*5) * 100
+		}
+		return l, nil
+	})
+
+	// Load 10 items
+	iter := suite.list.iterStart()
+	for i := 0; i < 10; i++ {
+		suite.True(iter.next(context.Background()))
+	}
+
+	// Move to position 2
+	iter = suite.list.iterStart()
+	for i := 0; i < 3; i++ {
+		iter.next(context.Background())
+	}
+	suite.list.move(iter)
+
+	seed := rand.Uint64() + 1
+
+	// shuffleFromOffset with offset 0 should behave like full shuffle
+	suite.list.shuffleFromOffset(rand.New(rand.NewSource(seed)), 0)
+
+	// Unshuffle with offset 0
+	suite.list.unshuffleFromOffset(rand.New(rand.NewSource(seed)), 0)
+
+	// Verify original order
+	iter = suite.list.iterStart()
+	for i := 0; i < 10; i++ {
+		suite.True(iter.next(context.Background()))
+		item := iter.get()
+		suite.Equal(i*100, item.item, "item %d should be in original order", i)
+	}
+}
+
+func (suite *PagedListInternalSuite) TestShuffleFromOffsetAtEnd() {
+	suite.resolver.EXPECT().Page(mock.Anything, 0).Return([]int{10, 20, 30}, nil).Once()
+
+	iter := suite.list.iterStart()
+	for i := 0; i < 3; i++ {
+		suite.True(iter.next(context.Background()))
+	}
+
+	// Move to last position
+	iter = suite.list.iterStart()
+	for i := 0; i < 3; i++ {
+		iter.next(context.Background())
+	}
+	suite.list.move(iter)
+
+	seed := rand.Uint64() + 1
+	// Shuffle from offset at end: should be a no-op
+	suite.list.shuffleFromOffset(rand.New(rand.NewSource(seed)), 2)
+
+	// Verify nothing changed
+	iter = suite.list.iterStart()
+	expected := []int{10, 20, 30}
+	for _, exp := range expected {
+		suite.True(iter.next(context.Background()))
+		item := iter.get()
+		suite.Equal(exp, item.item)
+	}
+}
+
 func (suite *PagedListInternalSuite) TestIteratorPanics() {
 	suite.resolver.EXPECT().Page(mock.Anything, 0).Return([]int{1, 2, 3}, nil).Once()
 

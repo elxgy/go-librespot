@@ -118,3 +118,15 @@ func SpotifyIdFromUri(uri string) (_ *SpotifyId, err error) {
 
 	return SpotifyIdFromBase62(SpotifyIdType(matches[1]), matches[2])
 }
+
+func NormalizeSpotifyId(uriOrId string) string {
+	s := strings.TrimSpace(uriOrId)
+	if s == "" {
+		return ""
+	}
+	id, err := SpotifyIdFromUri(s)
+	if err != nil {
+		return s
+	}
+	return id.Base62()
+}

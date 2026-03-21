@@ -2,7 +2,7 @@
 
 This document describes how to embed go-librespot in your own application (e.g. a TUI, custom daemon, or other client) instead of using the built-in daemon.
 
-For using a **single auth flow** (one OAuth login for both your app and the librespot session), see [single-auth-flow.md](single-auth-flow.md).
+For using a **single auth flow** (one OAuth login for both your app and the librespot session), see [single-auth-flow.md](single-auth-flow.md). For Spotify Web API policy (dev mode 5-user limit, extended quota) and when to use session-only vs PKCE, see [spotify-api-policy-2026.md](spotify-api-policy-2026.md).
 
 ## Session creation
 
