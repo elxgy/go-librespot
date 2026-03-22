@@ -477,24 +477,12 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 		return nil
 
 	} else {
-		// Deshuffle: reset playback order to identity (original context order)
-		// Save current track's context index so playbackPos stays consistent.
-		currentCtxIdx := -1
-		if tl.playbackPos >= 0 && tl.playbackPos < len(tl.playbackOrder) {
-			currentCtxIdx = tl.playbackOrder[tl.playbackPos]
-		}
-		if tl.playbackOrder != nil {
-			for i := range tl.playbackOrder {
-				tl.playbackOrder[i] = i
-			}
-		}
-		// In identity order, position == context index
-		if currentCtxIdx >= 0 && currentCtxIdx < len(tl.playbackOrder) {
-			tl.playbackPos = currentCtxIdx
-		}
-
+		// Deshuffle: just toggle the flag. Don't modify playbackOrder or playbackPos.
+		// UpcomingTracks() is the single source of truth for the queue and doesn't
+		// depend on the shuffled flag. Modifying playbackOrder on deshuffle would
+		// silently change the queue contents and size.
 		tl.shuffled = false
-		tl.log.Debugf("unshuffled playback order (pos: %d)", tl.playbackPos)
+		tl.log.Debugf("deshuffled (pos: %d)", tl.playbackPos)
 		return nil
 	}
 }
