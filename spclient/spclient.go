@@ -535,3 +535,99 @@ func (c *Spclient) ResolveTrackOrEpisodeMetadata(ctx context.Context, uri string
 		return "", "", 0, fmt.Errorf("unsupported type for metadata: %s", id.Type())
 	}
 }
+
+// ResolvedEntry holds the result of resolving a single track or episode.
+type ResolvedEntry struct {
+	Name       string
+	Artist     string
+	DurationMS int
+}
+
+// ResolveTrackOrEpisodeMetadataBatch resolves metadata for multiple URIs in a single
+// HTTP request. This is much faster than calling ResolveTrackOrEpisodeMetadata in a loop.
+func (c *Spclient) ResolveTrackOrEpisodeMetadataBatch(ctx context.Context, uris []string) (map[string]ResolvedEntry, error) {
+	if len(uris) == 0 {
+		return nil, nil
+	}
+
+	entities := make([]*extmetadatapb.EntityRequest, 0, len(uris))
+	for _, uri := range uris {
+		spotId, err := librespot.SpotifyIdFromUri(uri)
+		if err != nil {
+			continue
+		}
+		id := *spotId
+		var ext extmetadatapb.ExtensionKind
+		switch id.Type() {
+		case librespot.SpotifyIdTypeTrack:
+			ext = extmetadatapb.ExtensionKind_TRACK_V4
+		case librespot.SpotifyIdTypeEpisode:
+			ext = extmetadatapb.ExtensionKind_EPISODE_V4
+		default:
+			continue
+		}
+		entities = append(entities, &extmetadatapb.EntityRequest{
+			EntityUri: id.Uri(),
+			Query: []*extmetadatapb.ExtensionQuery{{
+				ExtensionKind: ext,
+			}},
+		})
+	}
+
+	if len(entities) == 0 {
+		return nil, nil
+	}
+
+	resp, err := c.ExtendedMetadata(ctx, &extmetadatapb.BatchedEntityRequest{
+		EntityRequest: entities,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]ResolvedEntry, len(entities))
+	for _, item := range resp.ExtendedMetadata {
+		for _, extData := range item.ExtensionData {
+			if extData.Header.StatusCode != 200 {
+				continue
+			}
+			entry := ResolvedEntry{}
+			switch item.ExtensionKind {
+			case extmetadatapb.ExtensionKind_TRACK_V4:
+				var track metadatapb.Track
+				if err := extData.ExtensionData.UnmarshalTo(&track); err != nil {
+					continue
+				}
+				if track.Name != nil {
+					entry.Name = *track.Name
+				}
+				if len(track.Artist) > 0 && track.Artist[0].Name != nil {
+					entry.Artist = *track.Artist[0].Name
+				}
+				if track.Duration != nil {
+					entry.DurationMS = int(*track.Duration)
+				}
+			case extmetadatapb.ExtensionKind_EPISODE_V4:
+				var ep metadatapb.Episode
+				if err := extData.ExtensionData.UnmarshalTo(&ep); err != nil {
+					continue
+				}
+				if ep.Name != nil {
+					entry.Name = *ep.Name
+				}
+				if ep.Show != nil && ep.Show.Name != nil {
+					entry.Artist = *ep.Show.Name
+				}
+				if ep.Duration != nil {
+					entry.DurationMS = int(*ep.Duration)
+				}
+			default:
+				continue
+			}
+			if entry.Name != "" {
+				result[extData.EntityUri] = entry
+			}
+		}
+	}
+	return result, nil
+}
