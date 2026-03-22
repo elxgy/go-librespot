@@ -439,8 +439,10 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t) {
 		}
 
 		if errors.Is(err, io.EOF) {
-			// Reached EOF, move to a "paused" state.
+			// Reached EOF, drain remaining audio before closing.
+			// Without drain(), up to 500ms of buffered audio is lost.
 			out.pcmHandle = nil
+			C.snd_pcm_drain(pcmHandle)
 			if errCode := C.snd_pcm_close(pcmHandle); errCode < 0 {
 				out.err <- out.alsaError("snd_pcm_close", errCode)
 				out.lock.Unlock()
