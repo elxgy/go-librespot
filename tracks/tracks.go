@@ -203,6 +203,19 @@ func (tl *List) UpcomingTracks(ctx context.Context, n int) []*connectpb.Provided
 	return tracks
 }
 
+// WrapPlaybackFromCurrent reorders the playback order so the current track is first
+// and remaining tracks wrap around once. After this, playbackPos is 0 and
+// UpcomingTracks returns the wrapped queue. Call once at context load time.
+func (tl *List) WrapPlaybackFromCurrent() {
+	if tl.playbackOrder == nil || tl.playbackPos <= 0 {
+		return
+	}
+	tail := tl.playbackOrder[tl.playbackPos:]
+	head := tl.playbackOrder[:tl.playbackPos]
+	tl.playbackOrder = append(tail, head...)
+	tl.playbackPos = 0
+}
+
 func (tl *List) PrevTracks() []*connectpb.ProvidedTrack {
 	maxT := tl.maxTracks()
 
