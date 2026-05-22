@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +18,7 @@ import (
 )
 
 const (
-	DefaultChunkSize = 512 * 1024
+	DefaultChunkSize = 1024 * 1024
 	PrefetchCount    = 3
 )
 
@@ -115,28 +116,33 @@ func NewHttpChunkedReader(log librespot.Logger, client *http.Client, audioUrl st
 
 func (r *HttpChunkedReader) downloadChunk(idx int) (*http.Response, error) {
 	return backoff.RetryWithData(func() (*http.Response, error) {
-		resp, err := r.client.Do(&http.Request{
-			Method: "GET",
-			URL:    r.url,
-			Header: http.Header{
-				"User-Agent": []string{librespot.UserAgent()},
-				"Range": []string{fmt.Sprintf("bytes=%d-%d",
-					idx*DefaultChunkSize,
-					min(max(r.len, DefaultChunkSize), int64((idx+1)*DefaultChunkSize))-1,
-				)},
-			},
-		})
+		req, err := http.NewRequestWithContext(context.Background(), "GET", r.url.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", librespot.UserAgent())
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d",
+			idx*DefaultChunkSize,
+			min(max(r.len, DefaultChunkSize), int64((idx+1)*DefaultChunkSize))-1,
+		))
+		resp, err := r.client.Do(req)
 		if err != nil {
 			return nil, err
 		}
 
 		if resp.StatusCode != http.StatusPartialContent {
 			_ = resp.Body.Close()
-			return nil, fmt.Errorf("invalid first chunk response status: %s", resp.Status)
+			return nil, fmt.Errorf("invalid chunk response status: %s", resp.Status)
 		}
 
 		return resp, nil
-	}, backoff.WithMaxRetries(backoff.NewConstantBackOff(1*time.Second), 3))
+	}, func() backoff.BackOff {
+		b := backoff.NewExponentialBackOff()
+		b.InitialInterval = 200 * time.Millisecond
+		b.MaxInterval = 1 * time.Second
+		b.MaxElapsedTime = 5 * time.Second
+		return backoff.WithMaxRetries(b, 3)
+	}())
 }
 
 func (r *HttpChunkedReader) fetchChunk(idx int) ([]byte, error) {
