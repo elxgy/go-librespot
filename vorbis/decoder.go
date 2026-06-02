@@ -112,17 +112,18 @@ func New(log librespot.Logger, r librespot.SizedReadAtSeeker, meta *MetadataPage
 
 // Close stops and finalizes the decoding process, releases the allocated resources.
 // Puts the decoder into an unrecoverable state.
-func (d *Decoder) Close() {
+func (d *Decoder) Close() error {
 	if !d.stopRequested() {
 		close(d.stopChan)
 	}
 	d.Lock()
 	defer d.Unlock()
 	if d.closed {
-		return
+		return nil
 	}
 	d.closed = true
 	d.decoderStateCleanup()
+	return nil
 }
 
 func (d *Decoder) decoderStateCleanup() {

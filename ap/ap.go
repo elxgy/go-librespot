@@ -338,8 +338,9 @@ loop:
 
 			// something went very wrong, give up
 			ap.Close()
+		} else {
+			ap.connMu.Unlock()
 		}
-		ap.connMu.Unlock()
 
 		// reconnection was successful, do not close receivers
 		return

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"strings"
@@ -298,10 +299,19 @@ func (p *AppPlayer) loadContext(ctx context.Context, spotCtx *connectpb.Context,
 	return nil
 }
 
+func closeStream(s *player.Stream) {
+	if s == nil {
+		return
+	}
+	if closer, ok := s.Source.(io.Closer); ok {
+		_ = closer.Close()
+	}
+}
+
 func (p *AppPlayer) loadCurrentTrack(ctx context.Context, paused, drop bool) error {
 	if p.primaryStream != nil {
 		p.sess.Events().OnPrimaryStreamUnload(p.primaryStream, p.player.PositionMs())
-
+		closeStream(p.primaryStream)
 		p.primaryStream = nil
 	}
 
@@ -338,6 +348,7 @@ func (p *AppPlayer) loadCurrentTrack(ctx context.Context, paused, drop bool) err
 		p.secondaryStream = nil
 		prefetched = true
 	} else {
+		closeStream(p.secondaryStream)
 		p.secondaryStream = nil
 		prefetched = false
 
@@ -767,7 +778,9 @@ func (p *AppPlayer) volumeUpdated(ctx context.Context) {
 
 func (p *AppPlayer) stopPlayback(ctx context.Context) error {
 	p.player.Stop()
+	closeStream(p.primaryStream)
 	p.primaryStream = nil
+	closeStream(p.secondaryStream)
 	p.secondaryStream = nil
 
 	p.state.reset()

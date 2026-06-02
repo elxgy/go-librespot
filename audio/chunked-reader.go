@@ -65,6 +65,8 @@ type HttpChunkedReader struct {
 	pos int64
 
 	prefetchWg sync.WaitGroup
+	closeCtx   context.Context
+	closeFn    context.CancelFunc
 
 	initialLatency time.Duration
 	latencies      []time.Duration
@@ -72,6 +74,7 @@ type HttpChunkedReader struct {
 
 func NewHttpChunkedReader(log librespot.Logger, client *http.Client, audioUrl string) (_ *HttpChunkedReader, err error) {
 	r := &HttpChunkedReader{log: log, client: client}
+	r.closeCtx, r.closeFn = context.WithCancel(context.Background())
 
 	r.url, err = url.Parse(audioUrl)
 	if err != nil {
@@ -116,7 +119,7 @@ func NewHttpChunkedReader(log librespot.Logger, client *http.Client, audioUrl st
 
 func (r *HttpChunkedReader) downloadChunk(idx int) (*http.Response, error) {
 	return backoff.RetryWithData(func() (*http.Response, error) {
-		req, err := http.NewRequestWithContext(context.Background(), "GET", r.url.String(), nil)
+		req, err := http.NewRequestWithContext(r.closeCtx, "GET", r.url.String(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -392,6 +395,7 @@ func (r *HttpChunkedReader) TotalTime() time.Duration {
 }
 
 func (r *HttpChunkedReader) Close() error {
+	r.closeFn()
 	for _, chunk := range r.chunks {
 		chunk.L.Lock()
 		if chunk.fetching {

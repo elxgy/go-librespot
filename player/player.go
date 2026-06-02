@@ -700,10 +700,17 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 
 	decryptedStream, err := audio.NewAesAudioDecryptor(rawStream, audioKey)
 	if err != nil {
+		_ = rawStream.Close()
 		return nil, fmt.Errorf("failed intializing audio decryptor: %w", err)
 	}
 
 	var stream librespot.AudioSource
+	var succeeded bool
+	defer func() {
+		if !succeeded {
+			_ = decryptedStream.Close()
+		}
+	}()
 
 	audioFormat := GetAudioFileFormatAudioFormat(*file.Format)
 	if audioFormat == AudioFormatOGGVorbis {
@@ -749,5 +756,6 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 		}
 	}
 
+	succeeded = true
 	return &Stream{PlaybackId: playbackId, Source: stream, Media: media, File: file}, nil
 }
