@@ -416,6 +416,9 @@ func (ap *Accesspoint) reconnect() (err error) {
 	// if we are here the "recvLoop" has already died, restart it
 	go ap.recvLoop()
 
+	ap.lastPongAck = time.Now().Add(pongAckInterval)
+	go ap.pongAckTicker()
+
 	ap.log.Debugf("re-established accesspoint connection")
 	return nil
 }

@@ -68,8 +68,9 @@ type HttpChunkedReader struct {
 	closeCtx   context.Context
 	closeFn    context.CancelFunc
 
-	initialLatency time.Duration
-	latencies      []time.Duration
+	initialLatency  time.Duration
+	latencies       []time.Duration
+	latenciesMu     sync.Mutex
 }
 
 func NewHttpChunkedReader(log librespot.Logger, client *http.Client, audioUrl string) (_ *HttpChunkedReader, err error) {
@@ -187,7 +188,7 @@ func (r *HttpChunkedReader) fetchChunk(idx int) ([]byte, error) {
 
 	// read the chunk data
 	data, err := io.ReadAll(r.measureLatency(false, resp.Body))
-	if chunk.err != nil {
+	if err != nil {
 		// update chunk and signal not fetching
 		chunk.L.Lock()
 		chunk.err = err
@@ -306,7 +307,9 @@ func (r *HttpChunkedReader) measureLatency(initial bool, rr io.Reader) io.Reader
 				r.initialLatency = latency
 			}
 
+			r.latenciesMu.Lock()
 			r.latencies = append(r.latencies, latency)
+			r.latenciesMu.Unlock()
 		},
 	}
 }
@@ -324,6 +327,8 @@ func (r *HttpChunkedReader) InitialLatency() time.Duration {
 }
 
 func (r *HttpChunkedReader) MaxLatency() time.Duration {
+	r.latenciesMu.Lock()
+	defer r.latenciesMu.Unlock()
 	if len(r.latencies) == 0 {
 		return 0
 	}
@@ -339,6 +344,8 @@ func (r *HttpChunkedReader) MaxLatency() time.Duration {
 }
 
 func (r *HttpChunkedReader) MinLatency() time.Duration {
+	r.latenciesMu.Lock()
+	defer r.latenciesMu.Unlock()
 	if len(r.latencies) == 0 {
 		return 0
 	}
@@ -354,6 +361,8 @@ func (r *HttpChunkedReader) MinLatency() time.Duration {
 }
 
 func (r *HttpChunkedReader) AvgLatencyMs() float64 {
+	r.latenciesMu.Lock()
+	defer r.latenciesMu.Unlock()
 	if len(r.latencies) == 0 {
 		return 0
 	}
@@ -367,6 +376,8 @@ func (r *HttpChunkedReader) AvgLatencyMs() float64 {
 }
 
 func (r *HttpChunkedReader) MedianLatency() time.Duration {
+	r.latenciesMu.Lock()
+	defer r.latenciesMu.Unlock()
 	if len(r.latencies) == 0 {
 		return 0
 	}
@@ -385,6 +396,8 @@ func (r *HttpChunkedReader) MedianLatency() time.Duration {
 }
 
 func (r *HttpChunkedReader) TotalTime() time.Duration {
+	r.latenciesMu.Lock()
+	defer r.latenciesMu.Unlock()
 	var sum time.Duration
 	for _, latency := range r.latencies {
 		sum += latency

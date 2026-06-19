@@ -479,7 +479,7 @@ func (p *Player) httpChunkedReaderFromStorageResolve(log librespot.Logger, clien
 	if storageResolve.Result == downloadpb.StorageResolveResponse_STORAGE {
 		return nil, fmt.Errorf("old storage not supported")
 	} else if storageResolve.Result == downloadpb.StorageResolveResponse_RESTRICTED {
-		return nil, fmt.Errorf("storage is restricted")
+		return nil, librespot.ErrMediaRestricted
 	} else if storageResolve.Result == downloadpb.StorageResolveResponse_CDN {
 		if len(storageResolve.Cdnurl) == 0 {
 			return nil, fmt.Errorf("no cdn urls")
@@ -796,6 +796,9 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 	// Seek to the correct position if needed.
 	if mediaPosition > 0 {
 		if err := stream.SetPositionMs(max(0, min(mediaPosition, int64(media.Duration())))); err != nil {
+			if closer, ok := stream.(io.Closer); ok {
+				_ = closer.Close()
+			}
 			return nil, fmt.Errorf("failed seeking stream: %w", err)
 		}
 	}

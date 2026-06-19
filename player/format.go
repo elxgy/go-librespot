@@ -68,6 +68,11 @@ func selectBestMediaFormat(files []*metadatapb.AudioFile, preferredBitrate int, 
 	var best *metadatapb.AudioFile
 	var bestDist int
 	for _, ff := range files {
+		fmtKind := GetAudioFileFormatAudioFormat(*ff.Format)
+		if fmtKind != AudioFormatOGGVorbis && fmtKind != AudioFormatFLAC {
+			continue
+		}
+
 		if flac && (*ff.Format == metadatapb.AudioFile_FLAC_FLAC_24BIT || *ff.Format == metadatapb.AudioFile_FLAC_FLAC) {
 			return ff
 		}

@@ -305,8 +305,9 @@ func (d *Dealer) reconnect() error {
 	d.lastPongLock.Lock()
 	d.lastPong = time.Now()
 	d.lastPongLock.Unlock()
-	// restart the recv loop
+
 	go d.recvLoop()
+	go d.pingTicker()
 
 	d.log.Debugf("re-established dealer connection")
 	return nil
