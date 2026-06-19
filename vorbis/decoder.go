@@ -113,15 +113,13 @@ func New(log librespot.Logger, r librespot.SizedReadAtSeeker, meta *MetadataPage
 // Close stops and finalizes the decoding process, releases the allocated resources.
 // Puts the decoder into an unrecoverable state.
 func (d *Decoder) Close() error {
-	if !d.stopRequested() {
-		close(d.stopChan)
-	}
 	d.Lock()
 	defer d.Unlock()
 	if d.closed {
 		return nil
 	}
 	d.closed = true
+	close(d.stopChan)
 	d.decoderStateCleanup()
 	return nil
 }
@@ -362,10 +360,7 @@ func (d *Decoder) SetPositionMs(pos int64) (err error) {
 
 	// get the seek position in bytes from the milliseconds
 	posSamples := pos * int64(d.SampleRate) / 1000
-	posBytes := d.meta.GetSeekPosition(posSamples)
-	if posBytes > d.input.Size() {
-		posBytes = d.input.Size()
-	}
+	posBytes := min(d.meta.GetSeekPosition(posSamples), d.input.Size())
 
 	// seek there
 	if _, err = d.input.Seek(posBytes, io.SeekStart); err != nil {

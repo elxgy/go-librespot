@@ -84,7 +84,7 @@ func (tl *List) ensurePlaybackOrder(ctx context.Context) error {
 func (tl *List) buildPlaybackOrder() {
 	n := tl.tracks.len()
 	tl.playbackOrder = make([]int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		tl.playbackOrder[i] = i
 	}
 }

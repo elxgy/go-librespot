@@ -20,7 +20,7 @@ type DBusInstance struct {
 	log librespot.Logger
 }
 
-func (d *DBusInstance) setProperty(interfaceName string, fieldName string, value interface{}) *dbus.Error {
+func (d *DBusInstance) setProperty(interfaceName string, fieldName string, value any) *dbus.Error {
 
 	err := d.props.Set(
 		interfaceName,

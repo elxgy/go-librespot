@@ -484,7 +484,7 @@ func loadConfig(cfg *Config) error {
 	k := koanf.New(".")
 
 	// load default configuration
-	_ = k.Load(confmap.Provider(map[string]interface{}{
+	_ = k.Load(confmap.Provider(map[string]any{
 		"log_level": log.InfoLevel,
 
 		"device_type": "computer",
@@ -527,7 +527,7 @@ func loadConfig(cfg *Config) error {
 
 	// apply command line config overrides (-c/--conf flags)
 	if len(configOverrides) > 0 {
-		overrideMap := make(map[string]interface{})
+		overrideMap := make(map[string]any)
 		for _, override := range configOverrides {
 			parts := strings.SplitN(override, "=", 2)
 			if len(parts) != 2 {

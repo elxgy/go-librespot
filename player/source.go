@@ -99,12 +99,15 @@ func (s *SwitchingAudioSource) PositionMs() int64 {
 }
 
 func (s *SwitchingAudioSource) Close() error {
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+
 	var err error
-	if source, ok := s.source[true].(io.Closer); ok && source != nil {
-		err = errors.Join(err, source.Close())
-	}
-	if source, ok := s.source[false].(io.Closer); ok && source != nil {
-		err = errors.Join(err, source.Close())
+	for _, which := range []bool{true, false} {
+		if source, ok := s.source[which].(io.Closer); ok && source != nil {
+			err = errors.Join(err, source.Close())
+		}
+		delete(s.source, which)
 	}
 	return err
 }

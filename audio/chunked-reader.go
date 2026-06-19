@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -374,9 +374,7 @@ func (r *HttpChunkedReader) MedianLatency() time.Duration {
 	latencies := make([]time.Duration, len(r.latencies))
 	copy(latencies, r.latencies)
 
-	sort.Slice(latencies, func(i, j int) bool {
-		return latencies[i] < latencies[j]
-	})
+	slices.Sort(latencies)
 
 	mid := len(latencies) / 2
 	if len(latencies)%2 == 0 {

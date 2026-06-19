@@ -9,6 +9,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"strconv"
 	"strings"
@@ -189,12 +190,8 @@ func (p *AppPlayer) handlePlayerCommand(ctx context.Context, req dealer.RequestP
 		p.state.player.Suppressions = transferState.CurrentSession.Suppressions
 
 		p.state.player.ContextMetadata = map[string]string{}
-		for k, v := range transferState.CurrentSession.Context.Metadata {
-			p.state.player.ContextMetadata[k] = v
-		}
-		for k, v := range ctxTracks.Metadata() {
-			p.state.player.ContextMetadata[k] = v
-		}
+		maps.Copy(p.state.player.ContextMetadata, transferState.CurrentSession.Context.Metadata)
+		maps.Copy(p.state.player.ContextMetadata, ctxTracks.Metadata())
 
 		contextSpotType := librespot.InferSpotifyIdTypeFromContextUri(p.state.player.ContextUri)
 		currentTrack := librespot.ContextTrackToProvidedTrack(contextSpotType, transferState.Playback.CurrentTrack)
@@ -323,9 +320,7 @@ func (p *AppPlayer) handlePlayerCommand(ctx context.Context, req dealer.RequestP
 		if p.state.player.ContextMetadata == nil {
 			p.state.player.ContextMetadata = map[string]string{}
 		}
-		for k, v := range req.Command.Context.Metadata {
-			p.state.player.ContextMetadata[k] = v
-		}
+		maps.Copy(p.state.player.ContextMetadata, req.Command.Context.Metadata)
 
 		p.updateState(ctx)
 		return nil

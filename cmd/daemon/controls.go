@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"strconv"
 	"strings"
@@ -256,9 +257,7 @@ func (p *AppPlayer) loadContext(ctx context.Context, spotCtx *connectpb.Context,
 	if p.state.player.ContextMetadata == nil {
 		p.state.player.ContextMetadata = map[string]string{}
 	}
-	for k, v := range spotCtx.Metadata {
-		p.state.player.ContextMetadata[k] = v
-	}
+	maps.Copy(p.state.player.ContextMetadata, spotCtx.Metadata)
 
 	p.state.player.Timestamp = time.Now().UnixMilli()
 	p.state.player.PositionAsOfTimestamp = 0

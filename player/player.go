@@ -2,6 +2,7 @@ package player
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -51,12 +52,15 @@ type Player struct {
 	audioKey *audio.KeyProvider
 	events   EventManager
 
-	cdnQuarantine map[string]time.Time
+	cdnQuarantine   map[string]time.Time
+	cdnQuarantineMu sync.Mutex
 
 	newOutput func(source librespot.Float32Reader, volume float32) (output.Output, error)
 
-	cmd chan playerCmd
-	ev  chan Event
+	cmd       chan playerCmd
+	ev        chan Event
+	done      chan struct{}
+	closeOnce sync.Once
 
 	volumeSteps uint32
 
@@ -191,13 +195,25 @@ func NewPlayer(opts *Options) (*Player, error) {
 			})
 		},
 
-		cmd: make(chan playerCmd),
-		ev:  make(chan Event, 128),
+		cmd:  make(chan playerCmd),
+		ev:   make(chan Event, 128),
+		done: make(chan struct{}),
 	}
 
 	go p.manageLoop()
 
 	return p, nil
+}
+
+var ErrPlayerClosed = errors.New("player: already closed")
+
+func (p *Player) sendCmd(cmd playerCmd) bool {
+	select {
+	case <-p.done:
+		return false
+	case p.cmd <- cmd:
+		return true
+	}
 }
 
 func (p *Player) manageLoop() {
@@ -350,14 +366,16 @@ loop:
 		}
 	}
 
-	close(p.cmd)
-
-	_ = source.Close()
-
+	// Stop the output device first so the output goroutine stops reading
+	// from the source, then close the source (which closes the decoders).
 	if out != nil {
 		_ = out.Close()
 		out = nil
 	}
+
+	_ = source.Close()
+
+	close(p.done)
 }
 
 func (p *Player) HasBeenPlayingFor() time.Duration {
@@ -373,17 +391,22 @@ func (p *Player) Receive() <-chan Event {
 }
 
 func (p *Player) Close() {
-	p.cmd <- playerCmd{typ: playerCmdClose}
+	p.closeOnce.Do(func() {
+		p.sendCmd(playerCmd{typ: playerCmdClose})
+	})
+	<-p.done
 }
 
 func (p *Player) SetVolume(val uint32) {
 	vol := float32(val) / MaxStateVolume
-	p.cmd <- playerCmd{typ: playerCmdVolume, data: vol}
+	p.sendCmd(playerCmd{typ: playerCmdVolume, data: vol})
 }
 
 func (p *Player) Play() error {
 	resp := make(chan any, 1)
-	p.cmd <- playerCmd{typ: playerCmdPlay, resp: resp}
+	if !p.sendCmd(playerCmd{typ: playerCmdPlay, resp: resp}) {
+		return ErrPlayerClosed
+	}
 	if err := <-resp; err != nil {
 		return err.(error)
 	}
@@ -393,7 +416,9 @@ func (p *Player) Play() error {
 
 func (p *Player) Pause() error {
 	resp := make(chan any, 1)
-	p.cmd <- playerCmd{typ: playerCmdPause, resp: resp}
+	if !p.sendCmd(playerCmd{typ: playerCmdPause, resp: resp}) {
+		return ErrPlayerClosed
+	}
 	if err := <-resp; err != nil {
 		return err.(error)
 	}
@@ -403,13 +428,17 @@ func (p *Player) Pause() error {
 
 func (p *Player) Stop() {
 	resp := make(chan any, 1)
-	p.cmd <- playerCmd{typ: playerCmdStop, resp: resp}
+	if !p.sendCmd(playerCmd{typ: playerCmdStop, resp: resp}) {
+		return
+	}
 	<-resp
 }
 
 func (p *Player) SeekMs(pos int64) error {
 	resp := make(chan any, 1)
-	p.cmd <- playerCmd{typ: playerCmdSeek, data: pos, resp: resp}
+	if !p.sendCmd(playerCmd{typ: playerCmdSeek, data: pos, resp: resp}) {
+		return ErrPlayerClosed
+	}
 	if err := <-resp; err != nil {
 		return err.(error)
 	}
@@ -419,14 +448,18 @@ func (p *Player) SeekMs(pos int64) error {
 
 func (p *Player) PositionMs() int64 {
 	resp := make(chan any, 1)
-	p.cmd <- playerCmd{typ: playerCmdPosition, resp: resp}
+	if !p.sendCmd(playerCmd{typ: playerCmdPosition, resp: resp}) {
+		return 0
+	}
 	pos := <-resp
 	return pos.(int64)
 }
 
 func (p *Player) SetPrimaryStream(source librespot.AudioSource, paused, drop bool) error {
-	resp := make(chan any)
-	p.cmd <- playerCmd{typ: playerCmdSet, data: playerCmdDataSet{source: source, primary: true, paused: paused, drop: drop}, resp: resp}
+	resp := make(chan any, 1)
+	if !p.sendCmd(playerCmd{typ: playerCmdSet, data: playerCmdDataSet{source: source, primary: true, paused: paused, drop: drop}, resp: resp}) {
+		return ErrPlayerClosed
+	}
 	if err := <-resp; err != nil {
 		return err.(error)
 	}
@@ -435,8 +468,10 @@ func (p *Player) SetPrimaryStream(source librespot.AudioSource, paused, drop boo
 }
 
 func (p *Player) SetSecondaryStream(source librespot.AudioSource) {
-	resp := make(chan any)
-	p.cmd <- playerCmd{typ: playerCmdSet, data: playerCmdDataSet{source: source, primary: false}, resp: resp}
+	resp := make(chan any, 1)
+	if !p.sendCmd(playerCmd{typ: playerCmdSet, data: playerCmdDataSet{source: source, primary: false}, resp: resp}) {
+		return
+	}
 	<-resp
 }
 
@@ -461,25 +496,34 @@ func (p *Player) httpChunkedReaderFromStorageResolve(log librespot.Logger, clien
 				continue
 			}
 
-			if lastFailed, found := p.cdnQuarantine[cdnUrl.Host]; found {
-				if i == len(storageResolve.Cdnurl)-1 {
-					log.WithField("host", cdnUrl.Host).Warnf("cannot skip cdn url because it is the last one")
-				} else if time.Since(lastFailed) < CdnUrlQuarantineDuration {
-					log.WithField("host", cdnUrl.Host).Infof("skipping cdn url because it has failed recently")
-					continue
-				}
-			}
-
-			var rawStream *audio.HttpChunkedReader
-			rawStream, err = audio.NewHttpChunkedReader(log, client, cdnUrl.String())
-			if err != nil {
-				log.WithError(err).WithField("host", cdnUrl.Host).Warnf("failed creating chunked reader, trying next url")
-				p.cdnQuarantine[cdnUrl.Host] = time.Now()
+		if lastFailed, found := func() (time.Time, bool) {
+			p.cdnQuarantineMu.Lock()
+			defer p.cdnQuarantineMu.Unlock()
+			t, ok := p.cdnQuarantine[cdnUrl.Host]
+			return t, ok
+		}(); found {
+			if i == len(storageResolve.Cdnurl)-1 {
+				log.WithField("host", cdnUrl.Host).Warnf("cannot skip cdn url because it is the last one")
+			} else if time.Since(lastFailed) < CdnUrlQuarantineDuration {
+				log.WithField("host", cdnUrl.Host).Infof("skipping cdn url because it has failed recently")
 				continue
 			}
+		}
 
-			delete(p.cdnQuarantine, cdnUrl.Host)
-			return rawStream, nil
+		var rawStream *audio.HttpChunkedReader
+		rawStream, err = audio.NewHttpChunkedReader(log, client, cdnUrl.String())
+		if err != nil {
+			log.WithError(err).WithField("host", cdnUrl.Host).Warnf("failed creating chunked reader, trying next url")
+			p.cdnQuarantineMu.Lock()
+			p.cdnQuarantine[cdnUrl.Host] = time.Now()
+			p.cdnQuarantineMu.Unlock()
+			continue
+		}
+
+		p.cdnQuarantineMu.Lock()
+		delete(p.cdnQuarantine, cdnUrl.Host)
+		p.cdnQuarantineMu.Unlock()
+		return rawStream, nil
 		}
 
 		return nil, fmt.Errorf("failed creating chunked reader for any cdn url: %w", err)

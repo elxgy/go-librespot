@@ -10,7 +10,7 @@ import (
 	"github.com/godbus/dbus/v5/prop"
 )
 
-func newProp(value interface{}, cb func(*prop.Change) *dbus.Error) *prop.Prop {
+func newProp(value any, cb func(*prop.Change) *dbus.Error) *prop.Prop {
 	return &prop.Prop{
 		Value:    value,
 		Writable: true,
@@ -66,7 +66,7 @@ type MediaPlayer2PlayerInterfaceInterface interface {
 func (p MediaPlayer2PlayerInterface) Props() map[string]*prop.Prop {
 	return map[string]*prop.Prop{
 		"PlaybackStatus": newProp(Playing, nil),
-		"Metadata":       newProp(map[string]interface{}{}, nil),
+		"Metadata":       newProp(map[string]any{}, nil),
 
 		"Volume":     newProp(float64(100), p.volumeChanged),
 		"Shuffle":    newProp(false, p.shuffleChanged),
@@ -119,7 +119,7 @@ func (p MediaPlayer2PlayerInterface) loopStatusChanged(change *prop.Change) *dbu
 
 	// stupid, because sometimes the value gets parsed as LoopStatus, sometime as string, no idea why
 	value := change.Value
-	if reflect.TypeOf(value) != reflect.TypeOf(None) {
+	if reflect.TypeOf(value) != reflect.TypeFor[LoopStatus]() {
 		value = LoopStatus(change.Value.(string))
 	}
 

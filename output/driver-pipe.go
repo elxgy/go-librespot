@@ -46,7 +46,7 @@ func newPipeOutput(opts *NewOutputOptions) (out *pipeOutput, err error) {
 	switch opts.OutputPipeFormat {
 	case "s16le":
 		out.transform = func(in []float32, out []byte) int {
-			for i := 0; i < len(in); i++ {
+			for i := range in {
 				sample := int16(in[i] * 32768)
 				binary.LittleEndian.PutUint16(out[i*2:], uint16(sample))
 			}
@@ -54,7 +54,7 @@ func newPipeOutput(opts *NewOutputOptions) (out *pipeOutput, err error) {
 		}
 	case "s32le":
 		out.transform = func(in []float32, out []byte) int {
-			for i := 0; i < len(in); i++ {
+			for i := range in {
 				sample := int32(in[i] * 2147483648)
 				binary.LittleEndian.PutUint32(out[i*4:], uint32(sample))
 			}
@@ -62,7 +62,7 @@ func newPipeOutput(opts *NewOutputOptions) (out *pipeOutput, err error) {
 		}
 	case "f32le":
 		out.transform = func(in []float32, out []byte) int {
-			for i := 0; i < len(in); i++ {
+			for i := range in {
 				sample := math.Float32bits(in[i])
 				binary.LittleEndian.PutUint32(out[i*4:], sample)
 			}
@@ -112,7 +112,7 @@ func (out *pipeOutput) outputLoop() {
 			// humans. This is the same as math.Pow(out.volume, 2) but simpler.
 			volume := out.volume * out.volume
 
-			for i := 0; i < n; i++ {
+			for i := range n {
 				floats[i] *= volume
 			}
 		}

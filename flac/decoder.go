@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"unsafe"
 
 	librespot "github.com/elxgy/go-librespot"
@@ -74,6 +75,7 @@ import "C"
 
 // Decoder implements an FLAC decoder.
 type Decoder struct {
+	sync.Mutex
 	log librespot.Logger
 
 	SampleRate int32
@@ -85,6 +87,7 @@ type Decoder struct {
 	decoder    *C.FLAC__StreamDecoder
 	clientData *C.ClientData
 	buffer     []float32
+	closed     bool
 }
 
 func New(log librespot.Logger, r librespot.SizedReadAtSeeker, gain float32) (*Decoder, error) {
@@ -277,6 +280,11 @@ func callbackError(
 }
 
 func (d *Decoder) Read(p []float32) (n int, err error) {
+	d.Lock()
+	defer d.Unlock()
+	if d.closed {
+		return 0, errors.New("flac: decoder has already been closed")
+	}
 	for {
 		nn := copy(p, d.buffer)
 		p = p[nn:]
@@ -301,6 +309,11 @@ func (d *Decoder) Read(p []float32) (n int, err error) {
 }
 
 func (d *Decoder) SetPositionMs(pos int64) error {
+	d.Lock()
+	defer d.Unlock()
+	if d.closed {
+		return errors.New("flac: decoder has already been closed")
+	}
 	posSamples := pos * int64(d.SampleRate) / 1000
 	if C.FLAC__stream_decoder_seek_absolute(d.decoder, C.FLAC__uint64(posSamples)) == 0 {
 		return fmt.Errorf("could not seek to position")
@@ -310,6 +323,11 @@ func (d *Decoder) SetPositionMs(pos int64) error {
 }
 
 func (d *Decoder) PositionMs() int64 {
+	d.Lock()
+	defer d.Unlock()
+	if d.closed || d.SampleRate == 0 {
+		return 0
+	}
 	var samplePosition C.FLAC__uint64
 	if C.FLAC__stream_decoder_get_decode_position(d.decoder, &samplePosition) == 0 {
 		d.log.Errorf("could not get decode position")
@@ -320,7 +338,15 @@ func (d *Decoder) PositionMs() int64 {
 }
 
 func (d *Decoder) Close() error {
+	d.Lock()
+	defer d.Unlock()
+	if d.closed {
+		return nil
+	}
+	d.closed = true
 	C.FLAC__stream_decoder_delete(d.decoder)
 	C.freeClientData(d.clientData)
+	d.decoder = nil
+	d.clientData = nil
 	return nil
 }

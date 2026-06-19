@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	maps0 "maps"
 	"strconv"
 	"strings"
 
@@ -62,9 +63,7 @@ func NewContextResolver(ctx context.Context, log librespot.Logger, sp *Spclient,
 		if newSpotCtx.Metadata == nil {
 			newSpotCtx.Metadata = map[string]string{}
 		}
-		for key, val := range spotCtx.Metadata {
-			newSpotCtx.Metadata[key] = val
-		}
+		maps0.Copy(newSpotCtx.Metadata, spotCtx.Metadata)
 
 		spotCtx = newSpotCtx
 	}

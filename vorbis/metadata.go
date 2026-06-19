@@ -134,7 +134,7 @@ func ExtractMetadataPage(log librespot.Logger, r io.ReaderAt, limit int64) (libr
 			metadata.seekTable = make([]int32, 100)
 
 			cum := metadata.offset
-			for i := 0; i < 100; i++ {
+			for i := range 100 {
 				var idx uint8
 				if err := binary.Read(seg, binary.LittleEndian, &idx); err != nil {
 					return nil, nil, fmt.Errorf("failed reading seek table index: %w", err)
