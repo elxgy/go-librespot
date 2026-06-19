@@ -392,12 +392,25 @@ func (ap *Accesspoint) reconnect() (err error) {
 		return backoff.Permanent(fmt.Errorf("cannot reconnect without APWelcome"))
 	}
 
+	oldRecvLoopStop := ap.recvLoopStop
+	oldPongAckTickerStop := ap.pongAckTickerStop
+
 	if err = ap.connect(context.TODO(), &pb.LoginCredentials{
 		Typ:      ap.welcome.ReusableAuthCredentialsType,
 		Username: ap.welcome.CanonicalUsername,
 		AuthData: ap.welcome.ReusableAuthCredentials,
 	}); err != nil {
 		return err
+	}
+
+	// stop goroutines from the previous connection
+	select {
+	case oldRecvLoopStop <- struct{}{}:
+	default:
+	}
+	select {
+	case oldPongAckTickerStop <- struct{}{}:
+	default:
 	}
 
 	// if we are here the "recvLoop" has already died, restart it

@@ -285,8 +285,21 @@ func (d *Dealer) sendReply(key string, success bool) error {
 }
 
 func (d *Dealer) reconnect() error {
+	oldRecvLoopStop := d.recvLoopStop
+	oldPingTickerStop := d.pingTickerStop
+
 	if err := d.connect(context.TODO()); err != nil {
 		return err
+	}
+
+	// stop goroutines from the previous connection
+	select {
+	case oldRecvLoopStop <- struct{}{}:
+	default:
+	}
+	select {
+	case oldPingTickerStop <- struct{}{}:
+	default:
 	}
 
 	d.lastPongLock.Lock()

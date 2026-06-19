@@ -801,5 +801,5 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 	}
 
 	succeeded = true
-	return &Stream{PlaybackId: playbackId, Source: stream, Media: media, File: file}, nil
+	return &Stream{PlaybackId: playbackId, Source: stream, Media: media, File: file, closers: []io.Closer{decryptedStream, rawStream}}, nil
 }
