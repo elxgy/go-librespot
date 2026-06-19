@@ -52,8 +52,13 @@ func (s *SwitchingAudioSource) Read(p []float32) (n int, err error) {
 
 	n, err = s.source[s.which].Read(p)
 	if errors.Is(err, io.EOF) {
-		// notify this source is done
-		s.done <- struct{}{}
+		// notify this source is done. Non-blocking: if done already has
+		// a pending value, manageLoop hasn't consumed it yet so another
+		// EventTypeNotPlaying would be redundant.
+		select {
+		case s.done <- struct{}{}:
+		default:
+		}
 
 		// if there's no other source just let the EOF through
 		if s.source[!s.which] == nil {
