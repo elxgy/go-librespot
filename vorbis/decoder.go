@@ -127,22 +127,9 @@ func (d *Decoder) Close() error {
 }
 
 func (d *Decoder) decoderStateCleanup() {
-	vorbis.OggSyncClear(&d.syncState)
-	d.syncState.Free()
-
-	if d.streamState.Ref() != nil {
-		vorbis.OggStreamClear(&d.streamState)
-		d.streamState.Free()
-	}
-
-	if d.comment.Ref() != nil {
-		vorbis.CommentClear(&d.comment)
-		d.comment.Free()
-	}
-
-	if d.info.Ref() != nil {
-		vorbis.InfoClear(&d.info)
-		d.info.Free()
+	if d.block.Ref() != nil {
+		vorbis.BlockClear(&d.block)
+		d.block.Free()
 	}
 
 	if d.dspState.Ref() != nil {
@@ -150,10 +137,23 @@ func (d *Decoder) decoderStateCleanup() {
 		d.dspState.Free()
 	}
 
-	if d.block.Ref() != nil {
-		vorbis.BlockClear(&d.block)
-		d.block.Free()
+	if d.info.Ref() != nil {
+		vorbis.InfoClear(&d.info)
+		d.info.Free()
 	}
+
+	if d.comment.Ref() != nil {
+		vorbis.CommentClear(&d.comment)
+		d.comment.Free()
+	}
+
+	if d.streamState.Ref() != nil {
+		vorbis.OggStreamClear(&d.streamState)
+		d.streamState.Free()
+	}
+
+	vorbis.OggSyncClear(&d.syncState)
+	d.syncState.Free()
 
 	d.packet.Free()
 	d.page.Free()
@@ -356,6 +356,9 @@ func (d *Decoder) readNextPage() (err error) {
 func (d *Decoder) SetPositionMs(pos int64) (err error) {
 	d.Lock()
 	defer d.Unlock()
+	if d.closed {
+		return nil
+	}
 
 	// get the seek position in bytes from the milliseconds
 	posSamples := pos * int64(d.SampleRate) / 1000
@@ -386,10 +389,19 @@ func (d *Decoder) SetPositionMs(pos int64) (err error) {
 		return fmt.Errorf("failed reading page: %w", err)
 	}
 
-	d.log.Tracef("seek to %dms (diff: %dms, samples: %d, bytes: %d)", pos, pos-d.PositionMs(), posSamples, posBytes)
+	d.log.Tracef("seek to %dms (diff: %dms, samples: %d, bytes: %d)", pos, pos-d.positionMsLocked(), posSamples, posBytes)
 	return nil
 }
 
-func (d *Decoder) PositionMs() int64 {
+func (d *Decoder) positionMsLocked() int64 {
+	if d.closed {
+		return 0
+	}
 	return int64(vorbis.GranuleTime(&d.dspState, d.lastGranulepos) * 1000)
+}
+
+func (d *Decoder) PositionMs() int64 {
+	d.Lock()
+	defer d.Unlock()
+	return d.positionMsLocked()
 }
