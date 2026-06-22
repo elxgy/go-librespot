@@ -561,6 +561,9 @@ func (p *Player) retrieveAudioKey(ctx context.Context, spotId librespot.SpotifyI
 const spotifyLoudnessTarget = -14.0
 
 func calculateNormalisationFactor(params *audiofilespb.NormalizationParams, pregain float32) float32 {
+	if params == nil {
+		return 1
+	}
 	// LoudnessDb is the integrated loudness of the track in LUFS (ITU-R BS.1770)
 	// To normalize, calculate the gain needed to reach Spotify's target of -14 LUFS
 	gainDb := spotifyLoudnessTarget - params.LoudnessDb + pregain
@@ -599,25 +602,34 @@ func (p *Player) getUnrestrictedTrack(ctx context.Context, spotId librespot.Spot
 
 	var trackMeta metadatapb.Track
 	var audioFilesResp audiofilespb.AudioFilesExtensionResponse
+	trackMetaFound := false
 	for _, item := range resp.ExtendedMetadata {
 		for _, extData := range item.ExtensionData {
 			if extData.EntityUri != spotId.Uri() {
 				continue
 			}
-			if extData.Header.StatusCode != 200 {
-				return nil, nil, fmt.Errorf("extended metadata request returned status %d for %s", extData.Header.StatusCode, item.ExtensionKind)
-			}
 			switch item.ExtensionKind {
 			case extmetadatapb.ExtensionKind_TRACK_V4:
+				if extData.Header.StatusCode != 200 {
+					return nil, nil, fmt.Errorf("track metadata returned status %d", extData.Header.StatusCode)
+				}
 				if err := extData.ExtensionData.UnmarshalTo(&trackMeta); err != nil {
 					return nil, nil, fmt.Errorf("failed unmarshalling track metadata: %w", err)
 				}
+				trackMetaFound = true
 			case extmetadatapb.ExtensionKind_AUDIO_FILES:
+				if extData.Header.StatusCode != 200 {
+					break
+				}
 				if err := extData.ExtensionData.UnmarshalTo(&audioFilesResp); err != nil {
 					return nil, nil, fmt.Errorf("failed unmarshalling audio files metadata: %w", err)
 				}
 			}
 		}
+	}
+
+	if !trackMetaFound || len(trackMeta.Gid) == 0 {
+		return nil, nil, fmt.Errorf("track metadata not found for %s", spotId.Uri())
 	}
 
 	media := librespot.NewMediaFromTrack(&trackMeta)
@@ -633,6 +645,14 @@ func (p *Player) getUnrestrictedTrack(ctx context.Context, spotId librespot.Spot
 			trackMeta.File = alt.File
 			trackMeta.Preview = alt.Preview
 			trackMeta.OriginalAudio = alt.OriginalAudio
+
+			audioFilesResp.Files = nil
+			audioFilesResp.DefaultFileNormalizationParams = nil
+			audioFilesResp.DefaultAlbumNormalizationParams = nil
+			for _, f := range alt.File {
+				audioFilesResp.Files = append(audioFilesResp.Files, &audiofilespb.ExtendedAudioFile{File: f})
+			}
+
 			return &trackMeta, &audioFilesResp, nil
 		}
 	}
@@ -660,9 +680,11 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 		media = librespot.NewMediaFromTrack(trackMeta)
 		spotId = media.Id()
 
-		var audioFiles []*metadatapb.AudioFile
-		for _, f := range audioFilesResp.Files {
-			audioFiles = append(audioFiles, f.File)
+		audioFiles := trackMeta.File
+		if len(audioFiles) == 0 {
+			for _, f := range audioFilesResp.Files {
+				audioFiles = append(audioFiles, f.File)
+			}
 		}
 
 		file = selectBestMediaFormat(audioFiles, bitrate, p.flacEnabled)
@@ -726,6 +748,10 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 	}()
 	wg.Wait()
 	if audioKeyErr != nil {
+		var keyErr *audio.KeyProviderError
+		if errors.As(audioKeyErr, &keyErr) {
+			return nil, fmt.Errorf("failed retrieving audio key: %w: %w", librespot.ErrMediaRestricted, audioKeyErr)
+		}
 		return nil, fmt.Errorf("failed retrieving audio key: %w", audioKeyErr)
 	}
 	if storageErr != nil {
