@@ -10,7 +10,7 @@ import (
 	"time"
 
 	librespot "github.com/elxgy/go-librespot"
-	"golang.org/x/exp/slices"
+	"slices"
 )
 
 type apResolveResponse struct {

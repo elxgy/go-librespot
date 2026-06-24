@@ -398,7 +398,7 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t) {
 			// humans. This is the same as math.Pow(out.volume, 2) but simpler.
 			volume := out.volume * out.volume
 
-			for i := 0; i < n; i++ {
+			for i := range n {
 				floats[i] *= volume
 			}
 		}

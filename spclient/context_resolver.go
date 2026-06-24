@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	maps0 "maps"
+	"maps"
 	"strconv"
 	"strings"
 
 	librespot "github.com/elxgy/go-librespot"
 	connectpb "github.com/elxgy/go-librespot/proto/spotify/connectstate"
-	"golang.org/x/exp/maps"
 )
 
 type ContextResolver struct {
@@ -26,7 +25,7 @@ type ContextResolver struct {
 func isTracksComplete(ctx *connectpb.Context) bool {
 	expectedNumberOfTracks := -1
 	var err error = nil
-	for _, key := range maps.Keys(ctx.Metadata) {
+	for key := range maps.Keys(ctx.Metadata) {
 		if key == "playlist_number_of_tracks" {
 			expectedNumberOfTracks, err = strconv.Atoi(ctx.Metadata[key])
 			break
@@ -63,7 +62,7 @@ func NewContextResolver(ctx context.Context, log librespot.Logger, sp *Spclient,
 		if newSpotCtx.Metadata == nil {
 			newSpotCtx.Metadata = map[string]string{}
 		}
-		maps0.Copy(newSpotCtx.Metadata, spotCtx.Metadata)
+		maps.Copy(newSpotCtx.Metadata, spotCtx.Metadata)
 
 		spotCtx = newSpotCtx
 	}
