@@ -22,6 +22,10 @@ const (
 type Dealer struct {
 	log librespot.Logger
 
+	// baseCtx is the session-scoped context. It is canceled on Close, allowing
+	// in-flight connect/reconnect calls to observe shutdown.
+	baseCtx context.Context
+
 	client *http.Client
 
 	addr        librespot.GetAddressFunc
@@ -47,7 +51,10 @@ type Dealer struct {
 	requestReceiversLock sync.RWMutex
 }
 
-func NewDealer(log librespot.Logger, client *http.Client, dealerAddr librespot.GetAddressFunc, accessToken librespot.GetLogin5TokenFunc) *Dealer {
+func NewDealer(log librespot.Logger, client *http.Client, dealerAddr librespot.GetAddressFunc, accessToken librespot.GetLogin5TokenFunc, baseCtx context.Context) *Dealer {
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
 	return &Dealer{
 		client: &http.Client{
 			Transport:     client.Transport,
@@ -56,6 +63,7 @@ func NewDealer(log librespot.Logger, client *http.Client, dealerAddr librespot.G
 			Timeout:       timeout,
 		},
 		log:              log,
+		baseCtx:          baseCtx,
 		addr:             dealerAddr,
 		accessToken:      accessToken,
 		requestReceivers: map[string]requestReceiver{},
@@ -288,7 +296,7 @@ func (d *Dealer) reconnect() error {
 	oldRecvLoopStop := d.recvLoopStop
 	oldPingTickerStop := d.pingTickerStop
 
-	if err := d.connect(context.TODO()); err != nil {
+	if err := d.connect(d.baseCtx); err != nil {
 		return err
 	}
 

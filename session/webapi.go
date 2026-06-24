@@ -46,10 +46,12 @@ func (s *Session) WebApiWith429Retry(ctx context.Context, method, path string, q
 				wait = remaining - webApi429MinRemaining
 			}
 		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return nil, ctx.Err()
-		case <-time.After(wait):
+		case <-timer.C:
 		}
 	}
 	if lastResp != nil {

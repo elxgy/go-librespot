@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -23,7 +24,6 @@ import (
 	"github.com/elxgy/go-librespot/zeroconf"
 	"github.com/gofrs/flock"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/exp/rand"
 
 	"github.com/knadh/koanf/v2"
 	flag "github.com/spf13/pflag"
@@ -563,8 +563,6 @@ func loadConfig(cfg *Config) error {
 }
 
 func main() {
-	rand.Seed(uint64(time.Now().UnixNano()))
-
 	var cfg Config
 	if err := loadConfig(&cfg); err != nil {
 		if errors.Is(err, errAlreadyRunning) {

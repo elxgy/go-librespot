@@ -22,8 +22,9 @@ func (e KeyProviderError) Error() string {
 }
 
 type KeyProvider struct {
-	ap  *ap.Accesspoint
-	log librespot.Logger
+	ap      *ap.Accesspoint
+	log     librespot.Logger
+	baseCtx context.Context
 
 	recvLoopOnce sync.Once
 
@@ -42,8 +43,11 @@ type keyResponse struct {
 	err error
 }
 
-func NewAudioKeyProvider(log librespot.Logger, ap *ap.Accesspoint) *KeyProvider {
-	p := &KeyProvider{log: log, ap: ap}
+func NewAudioKeyProvider(log librespot.Logger, ap *ap.Accesspoint, baseCtx context.Context) *KeyProvider {
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	p := &KeyProvider{log: log, ap: ap, baseCtx: baseCtx}
 	p.reqChan = make(chan keyRequest)
 	p.stopChan = make(chan struct{}, 1)
 	return p
@@ -101,7 +105,7 @@ func (p *KeyProvider) recvLoop() {
 
 			reqs[reqSeq] = req
 
-			if err := p.ap.Send(context.TODO(), ap.PacketTypeRequestKey, buf.Bytes()); err != nil {
+			if err := p.ap.Send(p.baseCtx, ap.PacketTypeRequestKey, buf.Bytes()); err != nil {
 				delete(reqs, reqSeq)
 				req.resp <- keyResponse{err: fmt.Errorf("failed sending key request for file %s, gid: %s: %w",
 					hex.EncodeToString(req.fileId), librespot.GidToBase62(req.gid), err)}

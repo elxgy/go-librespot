@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"golang.org/x/exp/rand"
+	"math/rand/v2"
 )
 
 type PagedListInternalSuite struct {
@@ -120,14 +120,14 @@ func (suite *PagedListInternalSuite) TestShuffle() {
 	suite.list.move(iter)
 
 	seed := rand.Uint64()
-	suite.list.shuffle(rand.New(rand.NewSource(seed)))
+	suite.list.shuffle(rand.New(rand.NewPCG(seed, seed)))
 
 	item := suite.list.get()
 	suite.Equal(7, item.pageIdx)
 	suite.Equal(0, item.itemIdx)
 	suite.Equal(35*100, item.item)
 
-	suite.list.unshuffle(rand.New(rand.NewSource(seed)))
+	suite.list.unshuffle(rand.New(rand.NewPCG(seed, seed)))
 
 	iter = suite.list.iterStart()
 	for i := 0; i < 50; i++ {
@@ -274,7 +274,7 @@ func (suite *PagedListInternalSuite) TestSwapPanics() {
 }
 
 func (suite *PagedListInternalSuite) TestShuffleEmptyList() {
-	rnd := rand.New(rand.NewSource(12345))
+	rnd := rand.New(rand.NewPCG(12345, 12345))
 
 	// Should not panic on empty list
 	suite.NotPanics(func() { suite.list.shuffle(rnd) })
@@ -288,7 +288,7 @@ func (suite *PagedListInternalSuite) TestShuffleSingleItem() {
 	suite.True(iter.next(context.Background()))
 	suite.list.move(iter)
 
-	rnd := rand.New(rand.NewSource(12345))
+	rnd := rand.New(rand.NewPCG(12345, 12345))
 
 	// Should not panic or change anything with single item
 	suite.list.shuffle(rnd)
@@ -336,7 +336,7 @@ func (suite *PagedListInternalSuite) TestShuffleFromOffsetPreservesPrefix() {
 
 	// Shuffle from offset 3
 	seed := rand.Uint64() + 1
-	suite.list.shuffleFromOffset(rand.New(rand.NewSource(seed)), 3)
+	suite.list.shuffleFromOffset(rand.New(rand.NewPCG(seed, seed)), 3)
 
 	// Verify tracks before offset are unchanged
 	iter = suite.list.iterStart()
@@ -377,10 +377,10 @@ func (suite *PagedListInternalSuite) TestShuffleFromOffsetUnshuffleRoundTrip() {
 	suite.list.move(iter)
 
 	seed := rand.Uint64() + 1
-	suite.list.shuffleFromOffset(rand.New(rand.NewSource(seed)), 3)
+	suite.list.shuffleFromOffset(rand.New(rand.NewPCG(seed, seed)), 3)
 
 	// Unshuffle
-	suite.list.unshuffleFromOffset(rand.New(rand.NewSource(seed)), 3)
+	suite.list.unshuffleFromOffset(rand.New(rand.NewPCG(seed, seed)), 3)
 
 	// Verify full original order is restored
 	iter = suite.list.iterStart()
@@ -423,10 +423,10 @@ func (suite *PagedListInternalSuite) TestShuffleFromOffsetOffsetZero() {
 	seed := rand.Uint64() + 1
 
 	// shuffleFromOffset with offset 0 should behave like full shuffle
-	suite.list.shuffleFromOffset(rand.New(rand.NewSource(seed)), 0)
+	suite.list.shuffleFromOffset(rand.New(rand.NewPCG(seed, seed)), 0)
 
 	// Unshuffle with offset 0
-	suite.list.unshuffleFromOffset(rand.New(rand.NewSource(seed)), 0)
+	suite.list.unshuffleFromOffset(rand.New(rand.NewPCG(seed, seed)), 0)
 
 	// Verify original order
 	iter = suite.list.iterStart()
@@ -454,7 +454,7 @@ func (suite *PagedListInternalSuite) TestShuffleFromOffsetAtEnd() {
 
 	seed := rand.Uint64() + 1
 	// Shuffle from offset at end: should be a no-op
-	suite.list.shuffleFromOffset(rand.New(rand.NewSource(seed)), 2)
+	suite.list.shuffleFromOffset(rand.New(rand.NewPCG(seed, seed)), 2)
 
 	// Verify nothing changed
 	iter = suite.list.iterStart()

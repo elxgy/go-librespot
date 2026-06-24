@@ -38,6 +38,13 @@ func (e *AccesspointLoginError) Error() string {
 type Accesspoint struct {
 	log librespot.Logger
 
+	// baseCtx is the session-scoped context. It is canceled on Close, allowing
+	// in-flight I/O in recvLoop and reconnect to observe shutdown. It has no
+	// deadline; reads/writes on the underlying conn are still interrupted via
+	// conn.Close as before — threading the context here is hygiene, not a
+	// behavioral fix for the blocking reads themselves.
+	baseCtx context.Context
+
 	addr librespot.GetAddressFunc
 
 	nonce    []byte
@@ -64,8 +71,11 @@ type Accesspoint struct {
 	welcome *pb.APWelcome
 }
 
-func NewAccesspoint(log librespot.Logger, addr librespot.GetAddressFunc, deviceId string) *Accesspoint {
-	return &Accesspoint{log: log, addr: addr, deviceId: deviceId, recvChans: make(map[PacketType][]chan Packet)}
+func NewAccesspoint(log librespot.Logger, addr librespot.GetAddressFunc, deviceId string, baseCtx context.Context) *Accesspoint {
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	return &Accesspoint{log: log, baseCtx: baseCtx, addr: addr, deviceId: deviceId, recvChans: make(map[PacketType][]chan Packet)}
 }
 
 func (ap *Accesspoint) init(ctx context.Context) (err error) {
@@ -286,7 +296,7 @@ loop:
 			break loop
 		default:
 			// no need to hold the connMu since reconnection happens in this routine
-			pkt, payload, err := ap.encConn.receivePacket(context.TODO())
+			pkt, payload, err := ap.encConn.receivePacket(ap.baseCtx)
 			if err != nil {
 				if !ap.stop {
 					ap.log.WithError(err).Errorf("failed receiving packet")
@@ -298,7 +308,7 @@ loop:
 			switch pkt {
 			case PacketTypePing:
 				ap.log.Tracef("received accesspoint ping")
-				if err := ap.encConn.sendPacket(context.TODO(), PacketTypePong, payload); err != nil {
+				if err := ap.encConn.sendPacket(ap.baseCtx, PacketTypePong, payload); err != nil {
 					ap.log.WithError(err).Errorf("failed sending Pong packet")
 					break loop
 				}
@@ -395,7 +405,7 @@ func (ap *Accesspoint) reconnect() (err error) {
 	oldRecvLoopStop := ap.recvLoopStop
 	oldPongAckTickerStop := ap.pongAckTickerStop
 
-	if err = ap.connect(context.TODO(), &pb.LoginCredentials{
+	if err = ap.connect(ap.baseCtx, &pb.LoginCredentials{
 		Typ:      ap.welcome.ReusableAuthCredentialsType,
 		Username: ap.welcome.CanonicalUsername,
 		AuthData: ap.welcome.ReusableAuthCredentials,

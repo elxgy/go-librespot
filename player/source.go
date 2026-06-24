@@ -66,9 +66,7 @@ func (s *SwitchingAudioSource) Read(p []float32) (n int, err error) {
 		}
 
 		// delete current source and switch to the other one
-		if closer, ok := s.source[s.which].(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		_ = s.source[s.which].Close()
 		delete(s.source, s.which)
 		s.which = !s.which
 
@@ -109,8 +107,8 @@ func (s *SwitchingAudioSource) Close() error {
 
 	var err error
 	for _, which := range []bool{true, false} {
-		if source, ok := s.source[which].(io.Closer); ok && source != nil {
-			err = errors.Join(err, source.Close())
+		if s.source[which] != nil {
+			err = errors.Join(err, s.source[which].Close())
 		}
 		delete(s.source, which)
 	}

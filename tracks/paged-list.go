@@ -7,7 +7,7 @@ import (
 	"io"
 
 	librespot "github.com/elxgy/go-librespot"
-	"golang.org/x/exp/rand"
+	"math/rand/v2"
 )
 
 type pagedListItem[T any] struct {
@@ -139,7 +139,7 @@ func (l *pagedList[T]) shuffle(rnd *rand.Rand) {
 
 	idx := l.pos
 	for i := len(l.list) - 1; i > 0; i-- {
-		j := rnd.Intn(i + 1)
+		j := rnd.IntN(i + 1)
 		l.list[i], l.list[j] = l.list[j], l.list[i]
 		if i == idx {
 			idx = j
@@ -157,7 +157,7 @@ func (l *pagedList[T]) unshuffle(rnd *rand.Rand) {
 
 	exchanges := make([]int, len(l.list)-1)
 	for i := 0; i < len(l.list)-1; i++ {
-		exchanges[i] = rnd.Intn(len(l.list) - i)
+		exchanges[i] = rnd.IntN(len(l.list) - i)
 	}
 
 	idx := l.pos
@@ -186,7 +186,7 @@ func (l *pagedList[T]) shuffleFromOffset(rnd *rand.Rand, offset int) {
 
 	idx := l.pos
 	for i := n - 1; i > offset; i-- {
-		j := offset + rnd.Intn(i-offset+1)
+		j := offset + rnd.IntN(i-offset+1)
 		l.list[i], l.list[j] = l.list[j], l.list[i]
 		if i == idx {
 			idx = j
@@ -210,7 +210,7 @@ func (l *pagedList[T]) unshuffleFromOffset(rnd *rand.Rand, offset int) {
 	subLen := n - offset
 	exchanges := make([]int, subLen-1)
 	for i := 0; i < subLen-1; i++ {
-		exchanges[i] = rnd.Intn(subLen - i)
+		exchanges[i] = rnd.IntN(subLen - i)
 	}
 
 	idx := l.pos

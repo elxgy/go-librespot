@@ -41,6 +41,14 @@ type Session struct {
 	dealer   *dealer.Dealer
 	audioKey *audio.KeyProvider
 	events   player.EventManager
+
+	// baseCtx is the session-scoped lifecycle context. It is decoupled from the
+	// bootstrap ctx passed to NewSessionFromOptions (which may have a deadline
+	// or be canceled immediately after login). All fork components derived from
+	// this context (AP, Dealer, Mercury, AudioKey) observe session shutdown via
+	// baseCancel, called from Close.
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
 }
 
 func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error) {
@@ -67,6 +75,7 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 		clientId:    clientId,
 		client:      opts.Client,
 	}
+	s.baseCtx, s.baseCancel = context.WithCancel(context.Background())
 	if s.client == nil {
 		s.client = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -97,7 +106,7 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed getting accesspoint from resolver: %w", err)
 	}
-	s.ap = ap.NewAccesspoint(opts.Log, apAddr, s.deviceId)
+	s.ap = ap.NewAccesspoint(opts.Log, apAddr, s.deviceId, s.baseCtx)
 
 	// authenticate with the accesspoint using the proper credentials
 	switch creds := opts.Credentials.(type) {
@@ -196,13 +205,13 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed getting dealer from resolver: %w", err)
 	}
-	s.dealer = dealer.NewDealer(opts.Log, s.client, dealerAddr, s.login5.AccessToken())
+	s.dealer = dealer.NewDealer(opts.Log, s.client, dealerAddr, s.login5.AccessToken(), s.baseCtx)
 
 	// initialize mercury/hermes
-	s.hg = mercury.NewClient(opts.Log, s.ap)
+	s.hg = mercury.NewClient(opts.Log, s.ap, s.baseCtx)
 
 	// init audio key provider
-	s.audioKey = audio.NewAudioKeyProvider(opts.Log, s.ap)
+	s.audioKey = audio.NewAudioKeyProvider(opts.Log, s.ap, s.baseCtx)
 
 	// init event sender
 	s.events, err = events.Plugin.NewEventManager(opts.Log, opts.AppState, s.hg, s.sp, s.ap.Username())
@@ -214,6 +223,7 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 }
 
 func (s *Session) Close() {
+	s.baseCancel()
 	s.ap.Close()
 	s.events.Close()
 	s.audioKey.Close()

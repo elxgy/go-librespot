@@ -28,8 +28,9 @@ type hermesResponse struct {
 }
 
 type Client struct {
-	log librespot.Logger
-	ap  *ap.Accesspoint
+	log     librespot.Logger
+	ap      *ap.Accesspoint
+	baseCtx context.Context
 
 	recvLoopOnce sync.Once
 
@@ -37,8 +38,11 @@ type Client struct {
 	stopChan chan struct{}
 }
 
-func NewClient(log librespot.Logger, accesspoint *ap.Accesspoint) *Client {
-	c := &Client{log: log, ap: accesspoint}
+func NewClient(log librespot.Logger, accesspoint *ap.Accesspoint, baseCtx context.Context) *Client {
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	c := &Client{log: log, ap: accesspoint, baseCtx: baseCtx}
 	c.reqChan = make(chan hermesRequest)
 	c.stopChan = make(chan struct{}, 1)
 	return c
@@ -154,7 +158,7 @@ func (c *Client) recvLoop() {
 
 			reqs[reqSeq] = req
 
-			if err := c.ap.Send(context.TODO(), ap.PacketTypeMercuryReq, buf.Bytes()); err != nil {
+			if err := c.ap.Send(c.baseCtx, ap.PacketTypeMercuryReq, buf.Bytes()); err != nil {
 				delete(reqs, reqSeq)
 				req.resp <- hermesResponse{err: fmt.Errorf("failed sending mercury request: %w", err)}
 				continue

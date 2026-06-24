@@ -23,7 +23,7 @@ import (
 	streamingpb "github.com/elxgy/go-librespot/proto/spotify/streaming"
 	"github.com/elxgy/go-librespot/spclient"
 	"github.com/elxgy/go-librespot/vorbis"
-	"golang.org/x/exp/rand"
+	cryptorand "crypto/rand"
 )
 
 const (
@@ -664,7 +664,7 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 	log := p.log.WithField("uri", spotId.Uri())
 
 	playbackId := make([]byte, 16)
-	_, _ = rand.Read(playbackId)
+	_, _ = cryptorand.Read(playbackId)
 
 	p.events.PreStreamLoadNew(playbackId, spotId, mediaPosition)
 

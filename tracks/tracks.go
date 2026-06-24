@@ -8,7 +8,7 @@ import (
 	librespot "github.com/elxgy/go-librespot"
 	connectpb "github.com/elxgy/go-librespot/proto/spotify/connectstate"
 	"github.com/elxgy/go-librespot/spclient"
-	"golang.org/x/exp/rand"
+	"math/rand/v2"
 )
 
 type List struct {
@@ -473,7 +473,7 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 		}
 
 		seed := rand.Uint64() + 1
-		rnd := rand.New(rand.NewSource(seed))
+		rnd := rand.New(rand.NewPCG(seed, seed))
 
 		// Always shuffle only tracks AFTER the current position.
 		// playbackOrder[:playbackPos+1] stays as-is (already played + current).
@@ -481,7 +481,7 @@ func (tl *List) ToggleShuffle(ctx context.Context, shuffle bool) error {
 		// it's in the played zone and can't return regardless of subsequent shuffles.
 		upcoming := tl.playbackOrder[tl.playbackPos+1:]
 		for i := len(upcoming) - 1; i > 0; i-- {
-			j := rnd.Intn(i + 1)
+			j := rnd.IntN(i + 1)
 			upcoming[i], upcoming[j] = upcoming[j], upcoming[i]
 		}
 

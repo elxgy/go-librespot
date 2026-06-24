@@ -1,5 +1,7 @@
 package go_librespot
 
+import "io"
+
 type Float32Reader interface {
 	// Read reads 32bit little endian floats from the stream
 	// until EOF or ErrDrainReader is returned.
@@ -7,6 +9,8 @@ type Float32Reader interface {
 }
 
 type AudioSource interface {
+	io.Closer
+
 	// SetPositionMs sets the new position in samples
 	SetPositionMs(int64) error
 
