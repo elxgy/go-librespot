@@ -34,8 +34,7 @@ type Client struct {
 
 	recvLoopOnce sync.Once
 
-	reqChan  chan hermesRequest
-	stopChan chan struct{}
+	reqChan chan hermesRequest
 }
 
 func NewClient(log librespot.Logger, accesspoint *ap.Accesspoint, baseCtx context.Context) *Client {
@@ -44,7 +43,6 @@ func NewClient(log librespot.Logger, accesspoint *ap.Accesspoint, baseCtx contex
 	}
 	c := &Client{log: log, ap: accesspoint, baseCtx: baseCtx}
 	c.reqChan = make(chan hermesRequest)
-	c.stopChan = make(chan struct{}, 1)
 	return c
 }
 
@@ -54,16 +52,20 @@ func (c *Client) startReceiving() {
 
 func (c *Client) recvLoop() {
 	ch := c.ap.Receive(ap.PacketTypeMercuryReq, ap.PacketTypeMercurySub, ap.PacketTypeMercuryUnsub, ap.PacketTypeMercuryEvent)
+	done := c.ap.Done()
 
 	seq := uint64(0)
 	reqs := map[uint64]hermesRequest{}
 
 	for {
 		select {
-		case <-c.stopChan:
-			c.stopChan <- struct{}{}
+		case <-done:
 			return
-		case pkt := <-ch:
+		case pkt, ok := <-ch:
+			if !ok {
+				return
+			}
+
 			if pkt.Type != ap.PacketTypeMercuryReq {
 				c.log.Warnf("skipping mercury packet with type: %s", pkt.Type.String())
 				continue
@@ -168,6 +170,8 @@ func (c *Client) recvLoop() {
 }
 
 func (c *Client) Request(ctx context.Context, method, uri string, fields map[string][]byte, payload []byte) ([]byte, error) {
+	done := c.ap.Done()
+
 	c.startReceiving()
 
 	header := &spotifypb.MercuryHeader{
@@ -189,33 +193,36 @@ func (c *Client) Request(ctx context.Context, method, uri string, fields map[str
 	}
 
 	req := hermesRequest{header: header, parts: parts, resp: make(chan hermesResponse, 1)}
-	c.reqChan <- req
+	select {
+	case <-done:
+		return nil, ap.ErrAccesspointClosed
+	case c.reqChan <- req:
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
+	var resp hermesResponse
 	select {
+	case resp = <-req.resp:
 	case <-ctx.Done():
-		return nil, context.DeadlineExceeded
-	case resp := <-req.resp:
-		if resp.err != nil {
-			return nil, resp.err
-		}
-
-		if *resp.header.StatusCode != 200 {
-			return nil, fmt.Errorf("mercury request failed with status code: %d", *resp.header.StatusCode)
-		}
-
-		var respPayload []byte
-		for _, part := range resp.parts {
-			respPayload = append(respPayload, part...)
-		}
-
-		return respPayload, nil
+		return nil, ctx.Err()
+	case <-done:
+		return nil, ap.ErrAccesspointClosed
 	}
-}
 
-func (c *Client) Close() {
-	c.stopChan <- struct{}{}
-	<-c.stopChan
+	if resp.err != nil {
+		return nil, resp.err
+	}
+
+	if *resp.header.StatusCode != 200 {
+		return nil, fmt.Errorf("mercury request failed with status code: %d", *resp.header.StatusCode)
+	}
+
+	var respPayload []byte
+	for _, part := range resp.parts {
+		respPayload = append(respPayload, part...)
+	}
+
+	return respPayload, nil
 }

@@ -178,7 +178,11 @@ func (d *Dealer) handleMessage(rawMsg *RawMessage) {
 	}
 
 	for _, recv := range matchedReceivers {
-		recv.c <- msg
+		select {
+		case recv.c <- msg:
+		case <-d.done:
+			return
+		}
 	}
 }
 
@@ -187,15 +191,24 @@ func (d *Dealer) ReceiveMessage(uriPrefixes ...string) <-chan Message {
 		panic("uri prefixes list cannot be empty")
 	}
 
-	d.messageReceiversLock.Lock()
-	defer d.messageReceiversLock.Unlock()
+	d.connMu.RLock()
+	select {
+	case <-d.done:
+		d.connMu.RUnlock()
+		c := make(chan Message)
+		close(c)
+		return c
+	default:
+	}
 
-	// create new receiver
+	d.messageReceiversLock.Lock()
 	c := make(chan Message)
 	d.messageReceivers = append(d.messageReceivers, messageReceiver{uriPrefixes, c})
 
 	// start receiving if necessary
 	d.startReceiving()
+	d.messageReceiversLock.Unlock()
+	d.connMu.RUnlock()
 
 	return c
 }
@@ -226,28 +239,45 @@ func (d *Dealer) handleRequest(rawMsg *RawMessage) {
 	}
 
 	// dispatch request
-	resp := make(chan bool)
-	recv.c <- Request{
+	resp := make(chan bool, 1)
+	select {
+	case recv.c <- Request{
 		resp:         resp,
 		MessageIdent: rawMsg.MessageIdent,
 		Payload:      payload,
+	}:
+	case <-d.done:
+		return
 	}
 
 	// wait for response and send it
-	success := <-resp
-	if err := d.sendReply(rawMsg.Key, success); err != nil {
-		log.WithError(err).Error("failed sending dealer reply")
+	select {
+	case success := <-resp:
+		if err := d.sendReply(rawMsg.Key, success); err != nil {
+			log.WithError(err).Error("failed sending dealer reply")
+			return
+		}
+	case <-d.done:
 		return
 	}
 }
 
 func (d *Dealer) ReceiveRequest(uri string) <-chan Request {
+	d.connMu.RLock()
+	select {
+	case <-d.done:
+		d.connMu.RUnlock()
+		c := make(chan Request)
+		close(c)
+		return c
+	default:
+	}
+
 	d.requestReceiversLock.Lock()
 	defer d.requestReceiversLock.Unlock()
+	defer d.connMu.RUnlock()
 
-	// check that there isn't another receiver for this uri
-	_, ok := d.requestReceivers[uri]
-	if ok {
+	if _, ok := d.requestReceivers[uri]; ok {
 		panic(fmt.Sprintf("cannot have more request receivers for %s", uri))
 	}
 

@@ -224,9 +224,7 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 
 func (s *Session) Close() {
 	s.baseCancel()
-	s.ap.Close()
 	s.events.Close()
-	s.audioKey.Close()
-	s.hg.Close()
 	s.dealer.Close()
+	s.ap.Close()
 }

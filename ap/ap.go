@@ -9,6 +9,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -38,12 +39,13 @@ func (e *AccesspointLoginError) Error() string {
 type Accesspoint struct {
 	log librespot.Logger
 
-	// baseCtx is the session-scoped context. It is canceled on Close, allowing
-	// in-flight I/O in recvLoop and reconnect to observe shutdown. It has no
-	// deadline; reads/writes on the underlying conn are still interrupted via
-	// conn.Close as before — threading the context here is hygiene, not a
-	// behavioral fix for the blocking reads themselves.
+	// baseCtx is the session-scoped context. ctx is derived from it and canceled
+	// on Close, so both session shutdown and AP shutdown bound the reconnect
+	// backoff and in-flight I/O. Reads/writes on the underlying conn are still
+	// interrupted via conn.Close as before.
 	baseCtx context.Context
+	ctx     context.Context
+	cancel  context.CancelFunc
 
 	addr librespot.GetAddressFunc
 
@@ -55,18 +57,15 @@ type Accesspoint struct {
 	conn    net.Conn
 	encConn *shannonConn
 
-	stop              bool
-	pongAckTickerStop chan struct{}
-	recvLoopStop      chan struct{}
-	recvLoopOnce      sync.Once
-	recvChans         map[PacketType][]chan Packet
-	recvChansLock     sync.RWMutex
-	lastPongAck       time.Time
-	lastPongAckLock   sync.Mutex
+	done            chan struct{}
+	closeOnce       sync.Once
+	recvLoopOnce    sync.Once
+	recvChans       map[PacketType][]chan Packet
+	recvChansLock   sync.RWMutex
+	lastPongAck     time.Time
+	lastPongAckLock sync.Mutex
 
-	// connMu is held for writing when performing reconnection and for reading mainly when accessing welcome
-	// or sending packets. If it's not held, a valid connection (and APWelcome) is available. Be careful not to deadlock
-	// anything with this.
+	// connMu protects conn, encConn, and welcome pointer state.
 	connMu  sync.RWMutex
 	welcome *pb.APWelcome
 }
@@ -75,8 +74,15 @@ func NewAccesspoint(log librespot.Logger, addr librespot.GetAddressFunc, deviceI
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
-	return &Accesspoint{log: log, baseCtx: baseCtx, addr: addr, deviceId: deviceId, recvChans: make(map[PacketType][]chan Packet)}
+	ctx, cancel := context.WithCancel(baseCtx)
+	return &Accesspoint{log: log, baseCtx: baseCtx, ctx: ctx, cancel: cancel, addr: addr, deviceId: deviceId, done: make(chan struct{}), recvChans: make(map[PacketType][]chan Packet)}
 }
+
+func (ap *Accesspoint) Done() <-chan struct{} {
+	return ap.done
+}
+
+var ErrAccesspointClosed = errors.New("accesspoint closed")
 
 func (ap *Accesspoint) init(ctx context.Context) (err error) {
 	// read 16 nonce bytes
@@ -91,11 +97,6 @@ func (ap *Accesspoint) init(ctx context.Context) (err error) {
 	}
 
 	// close previous connection if any
-	if ap.conn != nil {
-		_ = ap.conn.Close()
-		ap.conn = nil
-	}
-
 	// open connection to accesspoint
 	attempts := 0
 	for {
@@ -105,9 +106,13 @@ func (ap *Accesspoint) init(ctx context.Context) (err error) {
 		conn, err := proxy.Dial(ctx_, "tcp", addr)
 		cancel()
 		if err == nil {
+			// close previous connection if any
+			if ap.conn != nil {
+				_ = ap.conn.Close()
+			}
+
 			// we assign to ap.conn after because if Dial fails we'll have a nil ap.conn which we don't want
 			ap.conn = conn
-			// Successfully connected.
 			ap.log.Debugf("connected to %s", addr)
 			return nil
 		} else if attempts >= 6 {
@@ -198,6 +203,12 @@ func (ap *Accesspoint) Connect(ctx context.Context, creds *pb.LoginCredentials) 
 	ap.connMu.Lock()
 	defer ap.connMu.Unlock()
 
+	select {
+	case <-ap.done:
+		return ErrAccesspointClosed
+	default:
+	}
+
 	return backoff.Retry(func() error {
 		err := ap.connect(ctx, creds)
 		if err != nil {
@@ -209,9 +220,6 @@ func (ap *Accesspoint) Connect(ctx context.Context, creds *pb.LoginCredentials) 
 }
 
 func (ap *Accesspoint) connect(ctx context.Context, creds *pb.LoginCredentials) error {
-	ap.recvLoopStop = make(chan struct{}, 1)
-	ap.pongAckTickerStop = make(chan struct{}, 1)
-
 	if err := ap.init(ctx); err != nil {
 		return err
 	}
@@ -241,28 +249,50 @@ func (ap *Accesspoint) connect(ctx context.Context, creds *pb.LoginCredentials) 
 }
 
 func (ap *Accesspoint) Close() {
-	ap.connMu.Lock()
-	defer ap.connMu.Unlock()
-
-	ap.stop = true
-
-	if ap.conn == nil {
-		return
-	}
-
-	ap.recvLoopStop <- struct{}{}
-	ap.pongAckTickerStop <- struct{}{}
-	_ = ap.conn.Close()
+	ap.closeOnce.Do(func() {
+		close(ap.done)
+		ap.closeConn()
+		ap.cancel()
+	})
 }
 
 func (ap *Accesspoint) Send(ctx context.Context, pktType PacketType, payload []byte) error {
 	ap.connMu.RLock()
-	defer ap.connMu.RUnlock()
-	return ap.encConn.sendPacket(ctx, pktType, payload)
+	select {
+	case <-ap.done:
+		ap.connMu.RUnlock()
+		return ErrAccesspointClosed
+	default:
+	}
+
+	encConn := ap.encConn
+	ap.connMu.RUnlock()
+
+	if err := encConn.sendPacket(ctx, pktType, payload); err != nil {
+		select {
+		case <-ap.done:
+			return ErrAccesspointClosed
+		default:
+			return err
+		}
+	}
+
+	return nil
 }
 
+const recvChanSize = 32
+
 func (ap *Accesspoint) Receive(types ...PacketType) <-chan Packet {
-	ch := make(chan Packet)
+	ch := make(chan Packet, recvChanSize)
+	ap.connMu.RLock()
+	select {
+	case <-ap.done:
+		ap.connMu.RUnlock()
+		close(ch)
+		return ch
+	default:
+	}
+
 	ap.recvChansLock.Lock()
 	for _, type_ := range types {
 		ll, _ := ap.recvChans[type_]
@@ -273,6 +303,7 @@ func (ap *Accesspoint) Receive(types ...PacketType) <-chan Packet {
 
 	// start the recv loop if necessary
 	ap.startReceiving()
+	ap.connMu.RUnlock()
 
 	return ch
 }
@@ -280,11 +311,9 @@ func (ap *Accesspoint) Receive(types ...PacketType) <-chan Packet {
 func (ap *Accesspoint) startReceiving() {
 	ap.recvLoopOnce.Do(func() {
 		ap.log.Tracef("starting accesspoint recv loop")
-		go ap.recvLoop()
-
-		// set last ping in the future
-		ap.lastPongAck = time.Now().Add(pongAckInterval)
+		ap.resetPongAckDeadline()
 		go ap.pongAckTicker()
+		go ap.recvLoop()
 	})
 }
 
@@ -292,13 +321,15 @@ func (ap *Accesspoint) recvLoop() {
 loop:
 	for {
 		select {
-		case <-ap.recvLoopStop:
+		case <-ap.done:
 			break loop
 		default:
 			// no need to hold the connMu since reconnection happens in this routine
-			pkt, payload, err := ap.encConn.receivePacket(ap.baseCtx)
+			pkt, payload, err := ap.encConn.receivePacket(ap.ctx)
 			if err != nil {
-				if !ap.stop {
+				select {
+				case <-ap.done:
+				default:
 					ap.log.WithError(err).Errorf("failed receiving packet")
 				}
 
@@ -308,15 +339,13 @@ loop:
 			switch pkt {
 			case PacketTypePing:
 				ap.log.Tracef("received accesspoint ping")
-				if err := ap.encConn.sendPacket(ap.baseCtx, PacketTypePong, payload); err != nil {
+				if err := ap.Send(ap.ctx, PacketTypePong, payload); err != nil {
 					ap.log.WithError(err).Errorf("failed sending Pong packet")
 					break loop
 				}
 			case PacketTypePongAck:
 				ap.log.Tracef("received accesspoint pong ack")
-				ap.lastPongAckLock.Lock()
-				ap.lastPongAck = time.Now()
-				ap.lastPongAckLock.Unlock()
+				ap.notePongAck()
 				continue
 			default:
 				ap.recvChansLock.RLock()
@@ -325,7 +354,11 @@ loop:
 
 				handled := false
 				for _, ch := range ll {
-					ch <- Packet{Type: pkt, Payload: payload}
+					select {
+					case ch <- Packet{Type: pkt, Payload: payload}:
+					case <-ap.done:
+						break loop
+					}
 					handled = true
 				}
 
@@ -337,12 +370,14 @@ loop:
 	}
 
 	// always close as we might end up here because of application errors
-	_ = ap.conn.Close()
+	ap.closeConn()
 
 	// if we shouldn't stop, try to reconnect
-	if !ap.stop {
+	select {
+	case <-ap.done:
+	default:
 		ap.connMu.Lock()
-		if err := backoff.Retry(ap.reconnect, backoff.NewExponentialBackOff()); err != nil {
+		if err := backoff.Retry(ap.reconnect, backoff.WithContext(backoff.NewExponentialBackOff(), ap.ctx)); err != nil {
 			ap.log.WithError(err).Errorf("failed reconnecting accesspoint")
 			ap.connMu.Unlock()
 
@@ -350,10 +385,10 @@ loop:
 			ap.Close()
 		} else {
 			ap.connMu.Unlock()
-		}
 
-		// reconnection was successful, do not close receivers
-		return
+			// reconnection was successful, do not close receivers
+			return
+		}
 	}
 
 	ap.recvChansLock.RLock()
@@ -377,18 +412,16 @@ func (ap *Accesspoint) pongAckTicker() {
 loop:
 	for {
 		select {
-		case <-ap.pongAckTickerStop:
+		case <-ap.done:
 			break loop
 		case <-ticker.C:
-			ap.lastPongAckLock.Lock()
-			timePassed := time.Since(ap.lastPongAck)
-			ap.lastPongAckLock.Unlock()
+			timePassed := ap.timeSinceLastPongAck()
 			if timePassed > pongAckInterval {
 				ap.log.Errorf("did not receive last pong ack from accesspoint, %.0fs passed", timePassed.Seconds())
 
 				// closing the connection should make the read on the "recvLoop" fail,
 				// continue hoping for a new connection
-				_ = ap.conn.Close()
+				ap.closeConn()
 				continue
 			}
 		}
@@ -402,10 +435,7 @@ func (ap *Accesspoint) reconnect() (err error) {
 		return backoff.Permanent(fmt.Errorf("cannot reconnect without APWelcome"))
 	}
 
-	oldRecvLoopStop := ap.recvLoopStop
-	oldPongAckTickerStop := ap.pongAckTickerStop
-
-	if err = ap.connect(ap.baseCtx, &pb.LoginCredentials{
+	if err = ap.connect(ap.ctx, &pb.LoginCredentials{
 		Typ:      ap.welcome.ReusableAuthCredentialsType,
 		Username: ap.welcome.CanonicalUsername,
 		AuthData: ap.welcome.ReusableAuthCredentials,
@@ -413,24 +443,41 @@ func (ap *Accesspoint) reconnect() (err error) {
 		return err
 	}
 
-	// stop goroutines from the previous connection
-	select {
-	case oldRecvLoopStop <- struct{}{}:
-	default:
-	}
-	select {
-	case oldPongAckTickerStop <- struct{}{}:
-	default:
-	}
+	ap.resetPongAckDeadline()
 
 	// if we are here the "recvLoop" has already died, restart it
 	go ap.recvLoop()
 
-	ap.lastPongAck = time.Now().Add(pongAckInterval)
-	go ap.pongAckTicker()
-
 	ap.log.Debugf("re-established accesspoint connection")
 	return nil
+}
+
+func (ap *Accesspoint) resetPongAckDeadline() {
+	ap.lastPongAckLock.Lock()
+	ap.lastPongAck = time.Now().Add(pongAckInterval)
+	ap.lastPongAckLock.Unlock()
+}
+
+func (ap *Accesspoint) notePongAck() {
+	ap.lastPongAckLock.Lock()
+	ap.lastPongAck = time.Now()
+	ap.lastPongAckLock.Unlock()
+}
+
+func (ap *Accesspoint) timeSinceLastPongAck() time.Duration {
+	ap.lastPongAckLock.Lock()
+	defer ap.lastPongAckLock.Unlock()
+	return time.Since(ap.lastPongAck)
+}
+
+func (ap *Accesspoint) closeConn() {
+	ap.connMu.RLock()
+	conn := ap.conn
+	ap.connMu.RUnlock()
+
+	if conn != nil {
+		_ = conn.Close()
+	}
 }
 
 func (ap *Accesspoint) performKeyExchange() ([]byte, error) {
