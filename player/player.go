@@ -15,6 +15,7 @@ import (
 	cryptorand "crypto/rand"
 	librespot "github.com/elxgy/go-librespot"
 	"github.com/elxgy/go-librespot/audio"
+	"github.com/elxgy/go-librespot/cache"
 	"github.com/elxgy/go-librespot/flac"
 	"github.com/elxgy/go-librespot/output"
 	"github.com/elxgy/go-librespot/playplay"
@@ -52,6 +53,7 @@ type Player struct {
 	sp       *spclient.Spclient
 	audioKey *audio.KeyProvider
 	events   EventManager
+	cache    *cache.Cache
 
 	cdnQuarantine   map[string]time.Time
 	cdnQuarantineMu sync.Mutex
@@ -100,6 +102,10 @@ type Options struct {
 	Events   EventManager
 
 	Log librespot.Logger
+
+	// Cache, when non-nil, is used to store and retrieve encrypted audio files
+	// on disk, avoiding a CDN download when a track is played again.
+	Cache *cache.Cache
 
 	// FlacEnabled specifies if FLAC files should be preferred when available.
 	// When setting this to true, it is assumed that the PlayPlay plugin is provided.
@@ -170,6 +176,7 @@ func NewPlayer(opts *Options) (*Player, error) {
 		sp:                        opts.Spclient,
 		audioKey:                  opts.AudioKey,
 		events:                    opts.Events,
+		cache:                     opts.Cache,
 		cdnQuarantine:             make(map[string]time.Time),
 		flacEnabled:               opts.FlacEnabled,
 		normalisationEnabled:      opts.NormalisationEnabled,
@@ -753,40 +760,101 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 
 	log.Debugf("selected format %s (%x)", file.Format.String(), file.FileId)
 
-	var audioKey []byte
-	var storageResolve *downloadpb.StorageResolveResponse
-	var audioKeyErr, storageErr error
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		audioKey, audioKeyErr = p.retrieveAudioKey(ctx, spotId, file.FileId)
-	}()
-	go func() {
-		defer wg.Done()
-		storageResolve, storageErr = p.sp.ResolveStorageInteractive(ctx, file.FileId, file.Format, false)
-	}()
-	wg.Wait()
-	if audioKeyErr != nil {
-		var keyErr *audio.KeyProviderError
-		if errors.As(audioKeyErr, &keyErr) {
-			return nil, fmt.Errorf("failed retrieving audio key: %w: %w", librespot.ErrMediaRestricted, audioKeyErr)
+	// Prefer a cached copy of the encrypted audio file when available: this
+	// avoids resolving storage and downloading from the CDN entirely. The audio
+	// key is still required to decrypt it below.
+	var rawStream interface {
+		librespot.SizedReadAtSeeker
+		io.Closer
+	}
+
+	// Close the raw stream if stream setup fails before it is handed off to a
+	// Stream (e.g. a cached file that fails to decode); this releases the open
+	// file handle or cancels the in-flight download.
+	streamHandedOff := false
+	defer func() {
+		if !streamHandedOff {
+			_ = rawStream.Close()
 		}
-		return nil, fmt.Errorf("failed retrieving audio key: %w", audioKeyErr)
+	}()
+
+	var audioKey []byte
+
+	var cached interface {
+		librespot.SizedReadAtSeeker
+		io.Closer
 	}
-	if storageErr != nil {
-		return nil, fmt.Errorf("failed resolving track storage: %w", storageErr)
+	if p.cache != nil {
+		if c, ok := p.cache.File(file.FileId); ok {
+			log.Debugf("using cached audio file (%d bytes)", c.Size())
+			cached, _ = c.(interface {
+				librespot.SizedReadAtSeeker
+				io.Closer
+			})
+		}
 	}
 
-	p.events.PostStreamRequestAudioKey(playbackId)
-	p.events.PostStreamResolveStorage(playbackId)
+	if cached != nil {
+		p.events.PostStreamRequestAudioKey(playbackId)
 
-	rawStream, err := p.httpChunkedReaderFromStorageResolve(log, client, storageResolve)
-	if err != nil {
-		return nil, fmt.Errorf("failed creating chunked reader: %w", err)
+		var audioKeyErr error
+		audioKey, audioKeyErr = p.retrieveAudioKey(ctx, spotId, file.FileId)
+		if audioKeyErr != nil {
+			var keyErr *audio.KeyProviderError
+			if errors.As(audioKeyErr, &keyErr) {
+				return nil, fmt.Errorf("failed retrieving audio key: %w: %w", librespot.ErrMediaRestricted, audioKeyErr)
+			}
+			return nil, fmt.Errorf("failed retrieving audio key: %w", audioKeyErr)
+		}
+		rawStream = cached
+	} else {
+		var storageResolve *downloadpb.StorageResolveResponse
+		var audioKeyErrParallel, storageErr error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			audioKey, audioKeyErrParallel = p.retrieveAudioKey(ctx, spotId, file.FileId)
+		}()
+		go func() {
+			defer wg.Done()
+			storageResolve, storageErr = p.sp.ResolveStorageInteractive(ctx, file.FileId, file.Format, false)
+		}()
+		wg.Wait()
+		if audioKeyErrParallel != nil {
+			var keyErr *audio.KeyProviderError
+			if errors.As(audioKeyErrParallel, &keyErr) {
+				return nil, fmt.Errorf("failed retrieving audio key: %w: %w", librespot.ErrMediaRestricted, audioKeyErrParallel)
+			}
+			return nil, fmt.Errorf("failed retrieving audio key: %w", audioKeyErrParallel)
+		}
+		if storageErr != nil {
+			return nil, fmt.Errorf("failed resolving track storage: %w", storageErr)
+		}
+
+		p.events.PostStreamRequestAudioKey(playbackId)
+		p.events.PostStreamResolveStorage(playbackId)
+
+		httpStream, err := p.httpChunkedReaderFromStorageResolve(log, client, storageResolve)
+		if err != nil {
+			return nil, fmt.Errorf("failed creating chunked reader: %w", err)
+		}
+
+		// Persist the encrypted file to the cache once it has been fully
+		// downloaded. This is best-effort: caching failures never affect
+		// playback.
+		if p.cache != nil {
+			fileId := file.FileId
+			httpStream.OnComplete(func(r io.ReaderAt, size int64) {
+				if err := p.cache.SaveFile(fileId, io.NewSectionReader(r, 0, size)); err != nil {
+					log.WithError(err).Warnf("failed caching audio file")
+				}
+			})
+		}
+
+		rawStream = httpStream
+		p.events.PostStreamInitHttpChunkReader(playbackId, httpStream)
 	}
-
-	p.events.PostStreamInitHttpChunkReader(playbackId, rawStream)
 
 	decryptedStream, err := audio.NewAesAudioDecryptor(rawStream, audioKey)
 	if err != nil {
@@ -854,5 +922,6 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 	}
 
 	succeeded = true
+	streamHandedOff = true
 	return &Stream{PlaybackId: playbackId, Source: stream, Media: media, File: file, closers: []io.Closer{decryptedStream, rawStream}}, nil
 }

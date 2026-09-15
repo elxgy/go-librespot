@@ -3,6 +3,7 @@
 package audio
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -341,5 +342,59 @@ func testCloseCancelsFetchChunk(t *testing.T, transport http.RoundTripper, start
 		require.ErrorIs(t, err, net.ErrClosed)
 	case <-time.After(2 * time.Second):
 		t.Fatal("fetchChunk did not return")
+	}
+}
+
+func TestOnCompleteFiresOnceAllChunksPresent(t *testing.T) {
+	reader := newFetchTestReader(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusPartialContent,
+			Header:     http.Header{"Content-Range": []string{"bytes 0-1023/1024"}},
+			Body:       io.NopCloser(bytes.NewReader(make([]byte, 1024))),
+		}, nil
+	}))
+
+	// The constructor counts the eagerly fetched first chunk.
+	reader.completedChunks = 1
+
+	fired := make(chan struct{}, 1)
+	reader.OnComplete(func(_ io.ReaderAt, size int64) {
+		require.EqualValues(t, DefaultChunkSize, size)
+		fired <- struct{}{}
+	})
+
+	select {
+	case <-fired:
+	case <-time.After(time.Second):
+		t.Fatal("OnComplete did not fire for a fully present single-chunk reader")
+	}
+
+	require.Equal(t, 1, reader.completedChunks)
+	require.True(t, reader.onCompleteFired)
+}
+
+func TestOnCompleteNeverFiresAfterClose(t *testing.T) {
+	transport, started := newBlockingRoundTripper()
+	reader := newFetchTestReader(t, transport)
+
+	go reader.fetchChunk(0)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("fetchChunk did not start downloading")
+	}
+
+	require.NoError(t, reader.Close())
+
+	fired := make(chan struct{}, 1)
+	reader.OnComplete(func(_ io.ReaderAt, _ int64) {
+		fired <- struct{}{}
+	})
+
+	select {
+	case <-fired:
+		t.Fatal("OnComplete fired after close")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

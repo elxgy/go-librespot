@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 
 	"github.com/elxgy/go-librespot/apresolve"
 	"github.com/elxgy/go-librespot/player"
+	"github.com/elxgy/go-librespot/cache"
 	devicespb "github.com/elxgy/go-librespot/proto/spotify/connectstate/devices"
 	"github.com/elxgy/go-librespot/session"
 	"github.com/elxgy/go-librespot/zeroconf"
@@ -132,6 +134,19 @@ func (app *App) newAppPlayer(ctx context.Context, creds any) (_ *AppPlayer, err 
 	appPlayer.prefetchTimer = time.NewTimer(math.MaxInt64)
 	appPlayer.prefetchTimer.Stop()
 
+	var audioCache *cache.Cache
+	if app.cfg.CacheEnabled {
+		limit := int64(1 << 30)
+		if app.cfg.CacheSizeLimit != "" {
+			if parsed, err := strconv.ParseInt(app.cfg.CacheSizeLimit, 10, 64); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		if audioCache, err = cache.New(app.log, filepath.Join(app.cfg.ConfigDir, "cache"), limit); err != nil {
+			return nil, err
+		}
+	}
+
 	if appPlayer.sess, err = session.NewSessionFromOptions(ctx, &session.Options{
 		Log:         app.log,
 		DeviceType:  app.deviceType,
@@ -155,6 +170,7 @@ func (app *App) newAppPlayer(ctx context.Context, creds any) (_ *AppPlayer, err 
 		Log:      app.log,
 
 		FlacEnabled: app.cfg.FlacEnabled,
+		Cache:       audioCache,
 
 		NormalisationEnabled:      !app.cfg.NormalisationDisabled,
 		NormalisationUseAlbumGain: app.cfg.NormalisationUseAlbumGain,
@@ -416,8 +432,10 @@ type Config struct {
 	ZeroconfBackend               string    `koanf:"zeroconf_backend"`
 	DisableAutoplay               bool      `koanf:"disable_autoplay"`
 	ZeroconfInterfacesToAdvertise []string  `koanf:"zeroconf_interfaces_to_advertise"`
-	MprisEnabled                  bool      `koanf:"mpris_enabled"`
-	FlacEnabled                   bool      `koanf:"flac_enabled"`
+	MprisEnabled                   bool      `koanf:"mpris_enabled"`
+	FlacEnabled                    bool      `koanf:"flac_enabled"`
+	CacheEnabled                   bool      `koanf:"cache_enabled"`
+	CacheSizeLimit                 string    `koanf:"cache_size_limit"`
 	Server                        struct {
 		Enabled     bool   `koanf:"enabled"`
 		Address     string `koanf:"address"`
