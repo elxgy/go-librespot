@@ -566,6 +566,63 @@ func (tl *List) AddToQueue(track *connectpb.ContextTrack) {
 	tl.queue = append(tl.queue, track)
 }
 
+// visibleQueue returns the "up next" entries the embedder sees, plus the
+// absolute index of the first visible entry in tl.queue. When a queue entry
+// is currently playing (playingQueue), queue[0] is not part of the view.
+func (tl *List) visibleQueue() (offset int) {
+	if tl.playingQueue {
+		return 1
+	}
+	return 0
+}
+
+// RemoveFromQueue deletes the up-next entry at the given visible position
+// (0 = first entry shown by UpcomingTracks/NextTracksLoaded). Returns false
+// when the index is out of range.
+func (tl *List) RemoveFromQueue(index int) bool {
+	i := index + tl.visibleQueue()
+	if index < 0 || i >= len(tl.queue) {
+		return false
+	}
+
+	tl.queue = append(tl.queue[:i], tl.queue[i+1:]...)
+	if len(tl.queue) == 0 {
+		tl.playingQueue = false
+	}
+	return true
+}
+
+// ReorderQueue moves the up-next entry at `from` to position `to`, both
+// addressed in the same visible-view indexing as RemoveFromQueue.
+func (tl *List) ReorderQueue(from, to int) bool {
+	offset := tl.visibleQueue()
+	f, t := from+offset, to+offset
+	if from < 0 || to < 0 || f >= len(tl.queue) || t >= len(tl.queue) || f == t {
+		return false
+	}
+
+	entry := tl.queue[f]
+	tl.queue = append(tl.queue[:f], tl.queue[f+1:]...)
+	tl.queue = append(tl.queue[:t], append([]*connectpb.ContextTrack{entry}, tl.queue[t:]...)...)
+	return true
+}
+
+// GoToQueueEntry starts playback at the up-next entry `index` (visible-view
+// addressing): every entry before it is discarded and the entry is promoted
+// to the current position, mirroring how a queue transfer promotes queue[0].
+// Playback of the promoted entry is driven by the embedder reloading the
+// current track afterwards.
+func (tl *List) GoToQueueEntry(index int) bool {
+	i := index + tl.visibleQueue()
+	if index < 0 || i >= len(tl.queue) {
+		return false
+	}
+
+	tl.queue = tl.queue[i:]
+	tl.playingQueue = true
+	return true
+}
+
 func (tl *List) SetQueue(_ []*connectpb.ContextTrack, next []*connectpb.ContextTrack) {
 	if tl.playingQueue {
 		tl.queue = tl.queue[:1]
