@@ -240,7 +240,13 @@ loop:
 					break
 				}
 
-				// create a new output device if needed
+				// create a new output device if needed; a device that finished
+				// on EOF is dead and must not be reused
+				if out != nil && out.Closed() {
+					_ = out.Close()
+					out = nil
+					outErr = make(<-chan error)
+				}
 				if out == nil {
 					var err error
 					out, err = p.newOutput(source, volume)
@@ -357,10 +363,16 @@ loop:
 			out = nil
 			outErr = make(<-chan error)
 
-			p.log.Tracef("cleared closed output device")
+			if err != nil {
+				p.log.Tracef("cleared closed output device")
 
-			// FIXME: this is called even if not needed, like when autoplay starts
-			p.ev <- Event{Type: EventTypeStop}
+				// FIXME: this is called even if not needed, like when autoplay starts
+				p.ev <- Event{Type: EventTypeStop}
+			} else {
+				// nil error means the output finished after a natural EOF: same
+				// flow as the source-done signal so the next track loads.
+				p.ev <- Event{Type: EventTypeNotPlaying}
+			}
 		case <-source.Done():
 			p.ev <- Event{Type: EventTypeNotPlaying}
 		}

@@ -40,6 +40,7 @@ type toolboxOutput struct {
 	paused     bool
 	volume     float32
 	err        chan error
+	closed     bool
 }
 
 func newAudioToolboxOutput(opts *NewOutputOptions) (*toolboxOutput, error) {
@@ -235,7 +236,15 @@ func (out *toolboxOutput) Error() <-chan error {
 	return out.err
 }
 
+func (out *toolboxOutput) Closed() bool {
+	return out.closed
+}
+
 func (out *toolboxOutput) Close() error {
+	if out.closed {
+		return nil
+	}
+	out.closed = true
 
 	// Stop the audio queue
 	C.AudioQueueStop(out.audioQueue, C.Boolean(1))

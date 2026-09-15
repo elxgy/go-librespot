@@ -25,6 +25,10 @@ type Output interface {
 	// Error returns the error that stopped the device (if any).
 	Error() <-chan error
 
+	// Closed reports whether the output device has exited (EOF or error)
+	// and can no longer produce audio; callers must create a new output.
+	Closed() bool
+
 	// Close closes the output.
 	Close() error
 }

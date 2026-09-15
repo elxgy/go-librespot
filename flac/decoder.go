@@ -88,6 +88,13 @@ type Decoder struct {
 	clientData *C.ClientData
 	buffer     []float32
 	closed     bool
+
+	// baseSamples is the absolute sample position anchored at the last seek;
+	// decodedSamples counts samples decoded since then. callbackWrite runs
+	// under the decoder lock (process_single is only called from Read while
+	// holding it), so both follow the same locking discipline as d.buffer.
+	baseSamples    int64
+	decodedSamples int64
 }
 
 func New(log librespot.Logger, r librespot.SizedReadAtSeeker, gain float32) (*Decoder, error) {
@@ -238,6 +245,8 @@ func callbackWrite(
 	s := unsafe.Slice(buffer, d.Channels)
 	norm := float32(uint32(1) << (uint32(frame.header.bits_per_sample) - 1))
 
+	d.decodedSamples += int64(frame.header.blocksize)
+
 	// Copy samples to the temporary buffer interleaving channels
 	for i := 0; i < int(frame.header.blocksize); i++ {
 		for ch := 0; ch < int(d.Channels); ch++ {
@@ -318,6 +327,10 @@ func (d *Decoder) SetPositionMs(pos int64) error {
 	if C.FLAC__stream_decoder_seek_absolute(d.decoder, C.FLAC__uint64(posSamples)) == 0 {
 		return fmt.Errorf("could not seek to position")
 	}
+	// seek_absolute resumes at exactly posSamples, so re-anchoring the
+	// sample counter here keeps PositionMs absolute after seeks.
+	d.baseSamples = posSamples
+	d.decodedSamples = 0
 
 	return nil
 }
@@ -328,13 +341,7 @@ func (d *Decoder) PositionMs() int64 {
 	if d.closed || d.SampleRate == 0 {
 		return 0
 	}
-	var samplePosition C.FLAC__uint64
-	if C.FLAC__stream_decoder_get_decode_position(d.decoder, &samplePosition) == 0 {
-		d.log.Errorf("could not get decode position")
-		return 0
-	}
-
-	return int64(samplePosition) * 1000 / int64(d.SampleRate)
+	return (d.baseSamples + d.decodedSamples) * 1000 / int64(d.SampleRate)
 }
 
 func (d *Decoder) Close() error {

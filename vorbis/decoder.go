@@ -268,6 +268,12 @@ func (d *Decoder) Read(p []float32) (n int, err error) {
 		// decode another page
 		err = d.readNextPage()
 		if err != nil {
+			// The EOS page's samples are already in d.buf; drain them first
+			// and only surface io.EOF once the buffer is empty, otherwise the
+			// track tail is dropped and gapless transitions clip.
+			if errors.Is(err, io.EOF) && len(d.buf) > 0 {
+				continue
+			}
 			return n, err
 		}
 	}
@@ -380,7 +386,7 @@ func (d *Decoder) SetPositionMs(pos int64) (err error) {
 	vorbis.OggSyncPageout(&d.syncState, &d.page)
 
 	// read the page now that we are aligned
-	if err = d.readNextPage(); err != nil {
+	if err = d.readNextPage(); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("failed reading page: %w", err)
 	}
 

@@ -203,6 +203,10 @@ func (out *pulseAudioOutput) Error() <-chan error {
 	return out.err
 }
 
+func (out *pulseAudioOutput) Closed() bool {
+	return out.stream.Closed()
+}
+
 func (out *pulseAudioOutput) Close() error {
 	out.stream.Close()
 	out.client.Close()

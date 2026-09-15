@@ -458,7 +458,14 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t, gen uint64) {
 			C.snd_pcm_wait(pcmHandle, 500) // 500ms timeout
 			if errCode := C.snd_pcm_close(pcmHandle); errCode < 0 {
 				out.err <- out.alsaError("snd_pcm_close", errCode)
+				out.closed = true
+				return
 			}
+			// Mark the output dead and report a nil error so manageLoop
+			// retires it and creates a fresh one on the next Set: reusing
+			// this output would reopen the device with no writer loop.
+			out.closed = true
+			out.err <- nil
 			return
 		} else if err != nil {
 			// Got some other error. Close the output and report the error.
@@ -567,6 +574,12 @@ func (out *alsaOutput) SetVolume(vol float32) {
 func (out *alsaOutput) Error() <-chan error {
 	// No need to lock here (out.err is only set in newOutput).
 	return out.err
+}
+
+func (out *alsaOutput) Closed() bool {
+	out.lock.Lock()
+	defer out.lock.Unlock()
+	return out.closed
 }
 
 func (out *alsaOutput) Close() error {

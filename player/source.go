@@ -26,16 +26,33 @@ func NewSwitchingAudioSource() *SwitchingAudioSource {
 
 func (s *SwitchingAudioSource) SetPrimary(source librespot.AudioSource) {
 	s.cond.L.Lock()
-	defer s.cond.L.Unlock()
+	old := s.source[s.which]
 	s.source[s.which] = source
 	s.cond.Broadcast()
+	s.cond.L.Unlock()
+
+	// Close the displaced decoder outside the lock: decoder Close waits on
+	// the decoder's own mutex, which an in-flight Read holds for as long as
+	// the decode+network read takes. Holding cond.L here would block
+	// pause/seek/position for that duration. A concurrent Read of the
+	// displaced source is safe: it re-validates the source identity after
+	// re-locking.
+	if old != nil && old != source {
+		_ = old.Close()
+	}
 }
 
 func (s *SwitchingAudioSource) SetSecondary(source librespot.AudioSource) {
 	s.cond.L.Lock()
-	defer s.cond.L.Unlock()
+	old := s.source[!s.which]
 	s.source[!s.which] = source
 	s.cond.Broadcast()
+	s.cond.L.Unlock()
+
+	// See SetPrimary: close outside the lock.
+	if old != nil && old != source {
+		_ = old.Close()
+	}
 }
 
 func (s *SwitchingAudioSource) Done() <-chan struct{} {

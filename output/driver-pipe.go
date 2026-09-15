@@ -227,6 +227,12 @@ func (out *pipeOutput) Error() <-chan error {
 	return out.err
 }
 
+func (out *pipeOutput) Closed() bool {
+	out.lock.Lock()
+	defer out.lock.Unlock()
+	return out.closed
+}
+
 func (out *pipeOutput) Close() error {
 	out.lock.Lock()
 	defer out.lock.Unlock()

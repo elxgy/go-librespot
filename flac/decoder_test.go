@@ -69,3 +69,83 @@ func TestDecoderFullScalePeak(t *testing.T) {
 		t.Fatalf("peak = %f, want %f", peak, want)
 	}
 }
+
+func TestPositionTracksDecodedSamples(t *testing.T) {
+	data, err := os.ReadFile("testdata/sine16.flac")
+	if err != nil {
+		t.Fatalf("failed to read fixture: %v", err)
+	}
+
+	d, err := flac.New(&librespot.NullLogger{}, bytes.NewReader(data), 1.0)
+	if err != nil {
+		t.Fatalf("failed to create decoder: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	buf := make([]float32, 4096)
+	var readSamples int
+	for {
+		n, err := d.Read(buf)
+		readSamples += n
+		if err != nil {
+			break
+		}
+	}
+	if readSamples == 0 {
+		t.Fatal("expected to decode samples")
+	}
+
+	// SampleRate is not exposed until media-format reporting is ported; the
+	// fixture is 16-bit stereo, so readSamples/2 equals decoded frames.
+	got := d.PositionMs()
+	want := int64(readSamples/2) * 1000 / int64(44100)
+	if want == 0 {
+		t.Fatal("fixture produced zero expected duration")
+	}
+	if got < want/2 || got > want*2 {
+		t.Fatalf("PositionMs = %d, want ~%d (readSamples=%d)", got, want, readSamples)
+	}
+}
+
+func TestPositionAnchoredAfterSeek(t *testing.T) {
+	data, err := os.ReadFile("testdata/sine16.flac")
+	if err != nil {
+		t.Fatalf("failed to read fixture: %v", err)
+	}
+
+	d, err := flac.New(&librespot.NullLogger{}, bytes.NewReader(data), 1.0)
+	if err != nil {
+		t.Fatalf("failed to create decoder: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	// Drain a little so the position advances past the start; the fixture
+	// is only ~1000 frames, so keep reads small.
+	buf := make([]float32, 256)
+	if _, err := d.Read(buf); err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+
+	// Right after a successful seek the counter is anchored at the target:
+	// PositionMs must equal the seek target exactly (decodedSamples == 0).
+	if err := d.SetPositionMs(5); err != nil {
+		t.Fatalf("seek failed: %v", err)
+	}
+	// The ms->samples->ms round-trip is lossy by up to 1ms of integer division.
+	if got := d.PositionMs(); got < 4 || got > 5 {
+		t.Fatalf("PositionMs after seek to 5ms = %d, want ~5", got)
+	}
+
+	// Position must keep advancing monotonically while decoding.
+	prev := int64(4)
+	for range 3 {
+		if _, err := d.Read(buf); err != nil {
+			break
+		}
+		pos := d.PositionMs()
+		if pos < prev {
+			t.Fatalf("PositionMs went backwards: %d -> %d", prev, pos)
+		}
+		prev = pos
+	}
+}
