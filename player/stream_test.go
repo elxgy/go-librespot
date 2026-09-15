@@ -33,7 +33,7 @@ func (s *testSource) Close() error {
 	return nil
 }
 func (s *testSource) SetPositionMs(int64) error { return nil }
-func (s *testSource) PositionMs() int64        { return 0 }
+func (s *testSource) PositionMs() int64         { return 0 }
 
 func TestStreamCloseClosesSourceAndClosers(t *testing.T) {
 	src := &testSource{}

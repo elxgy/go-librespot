@@ -37,6 +37,11 @@ func writeMessage(w io.Writer, withHello bool, m proto.Message) error {
 	return nil
 }
 
+// maxUnboundedMessageSize caps messages when the caller allows any length
+// (maxLength <= 0); the pre-auth key exchange uses that mode and must not
+// trust the wire length for allocation sizing.
+const maxUnboundedMessageSize = 16 << 20
+
 func readMessage(r io.Reader, maxLength int, m proto.Message) error {
 	// read length
 	var length uint32
@@ -44,8 +49,16 @@ func readMessage(r io.Reader, maxLength int, m proto.Message) error {
 		return fmt.Errorf("failed reading message length: %w", err)
 	}
 
+	if length < 4 {
+		return fmt.Errorf("message length too short: %d", length)
+	}
+
 	// check length to avoid a mega allocation
-	if maxLength > 0 && length > uint32(maxLength) {
+	if maxLength > 0 {
+		if length > uint32(maxLength) {
+			return fmt.Errorf("message too long: %d", length)
+		}
+	} else if length-4 > maxUnboundedMessageSize {
 		return fmt.Errorf("message too long: %d", length)
 	}
 

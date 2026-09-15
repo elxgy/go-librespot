@@ -18,6 +18,9 @@ import (
 const (
 	pingInterval = 30 * time.Second
 	timeout      = 10 * time.Second
+
+	dealerMessageChanSize = 16
+	dealerReplyTimeout    = 30 * time.Second
 )
 
 var ErrDealerClosed = errors.New("dealer closed")

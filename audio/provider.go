@@ -30,9 +30,14 @@ type KeyProvider struct {
 	recvLoopOnce sync.Once
 
 	reqChan chan keyRequest
+
+	reqsMu  sync.Mutex
+	reqs    map[uint32]keyRequest
+	nextSeq uint32
 }
 
 type keyRequest struct {
+	seq    uint32
 	gid    []byte
 	fileId []byte
 	resp   chan keyResponse
@@ -47,7 +52,7 @@ func NewAudioKeyProvider(log librespot.Logger, ap *ap.Accesspoint, baseCtx conte
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
-	p := &KeyProvider{log: log, ap: ap, baseCtx: baseCtx}
+	p := &KeyProvider{log: log, ap: ap, baseCtx: baseCtx, reqs: make(map[uint32]keyRequest)}
 	p.reqChan = make(chan keyRequest)
 	return p
 }
@@ -60,12 +65,10 @@ func (p *KeyProvider) recvLoop() {
 	ch := p.ap.Receive(ap.PacketTypeAesKey, ap.PacketTypeAesKeyError)
 	done := p.ap.Done()
 
-	seq := uint32(0)
-	reqs := map[uint32]keyRequest{}
-
 	for {
 		select {
 		case <-done:
+			p.failPendingRequests(ap.ErrAccesspointClosed)
 			return
 		case pkt, ok := <-ch:
 			if !ok {
@@ -76,13 +79,11 @@ func (p *KeyProvider) recvLoop() {
 			var respSeq uint32
 			_ = binary.Read(resp, binary.BigEndian, &respSeq)
 
-			req, ok := reqs[respSeq]
+			req, ok := p.takeRequest(respSeq)
 			if !ok {
 				p.log.Warnf("received aes key with invalid sequence: %d", respSeq)
 				continue
 			}
-
-			delete(reqs, respSeq)
 
 			switch pkt.Type {
 			case ap.PacketTypeAesKey:
@@ -97,22 +98,17 @@ func (p *KeyProvider) recvLoop() {
 				_ = binary.Read(resp, binary.BigEndian, &errCode)
 				req.resp <- keyResponse{err: &KeyProviderError{errCode}}
 			default:
-				panic("unexpected packet type")
+				p.log.Warnf("unexpected aes key packet type: %s", pkt.Type.String())
 			}
 		case req := <-p.reqChan:
-			reqSeq := seq
-			seq++
-
 			var buf bytes.Buffer
 			_, _ = buf.Write(req.fileId)
 			_, _ = buf.Write(req.gid)
-			_ = binary.Write(&buf, binary.BigEndian, reqSeq)
+			_ = binary.Write(&buf, binary.BigEndian, req.seq)
 			_ = binary.Write(&buf, binary.BigEndian, uint16(0))
 
-			reqs[reqSeq] = req
-
 			if err := p.ap.Send(p.baseCtx, ap.PacketTypeRequestKey, buf.Bytes()); err != nil {
-				delete(reqs, reqSeq)
+				p.takeRequest(req.seq)
 				req.resp <- keyResponse{err: fmt.Errorf("failed sending key request for file %s, gid: %s: %w",
 					hex.EncodeToString(req.fileId), librespot.GidToBase62(req.gid), err)}
 				continue
@@ -129,6 +125,14 @@ func (p *KeyProvider) Request(ctx context.Context, gid []byte, fileId []byte) ([
 	p.startReceiving()
 
 	req := keyRequest{gid: gid, fileId: fileId, resp: make(chan keyResponse, 1)}
+	p.reqsMu.Lock()
+	req.seq = p.nextSeq
+	p.nextSeq++
+	p.reqsMu.Unlock()
+
+	p.putRequest(req)
+	defer p.takeRequest(req.seq)
+
 	select {
 	case <-done:
 		return nil, ap.ErrAccesspointClosed
@@ -152,4 +156,34 @@ func (p *KeyProvider) Request(ctx context.Context, gid []byte, fileId []byte) ([
 	}
 
 	return resp.key, nil
+}
+
+func (p *KeyProvider) putRequest(req keyRequest) {
+	p.reqsMu.Lock()
+	p.reqs[req.seq] = req
+	p.reqsMu.Unlock()
+}
+
+func (p *KeyProvider) takeRequest(seq uint32) (keyRequest, bool) {
+	p.reqsMu.Lock()
+	defer p.reqsMu.Unlock()
+	req, ok := p.reqs[seq]
+	if ok {
+		delete(p.reqs, seq)
+	}
+	return req, ok
+}
+
+func (p *KeyProvider) failPendingRequests(err error) {
+	p.reqsMu.Lock()
+	pending := make([]keyRequest, 0, len(p.reqs))
+	for seq, req := range p.reqs {
+		pending = append(pending, req)
+		delete(p.reqs, seq)
+	}
+	p.reqsMu.Unlock()
+
+	for _, req := range pending {
+		req.resp <- keyResponse{err: err}
+	}
 }

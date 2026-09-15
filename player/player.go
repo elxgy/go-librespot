@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	cryptorand "crypto/rand"
 	librespot "github.com/elxgy/go-librespot"
 	"github.com/elxgy/go-librespot/audio"
 	"github.com/elxgy/go-librespot/flac"
@@ -23,7 +24,6 @@ import (
 	streamingpb "github.com/elxgy/go-librespot/proto/spotify/streaming"
 	"github.com/elxgy/go-librespot/spclient"
 	"github.com/elxgy/go-librespot/vorbis"
-	cryptorand "crypto/rand"
 )
 
 const (
@@ -496,34 +496,34 @@ func (p *Player) httpChunkedReaderFromStorageResolve(log librespot.Logger, clien
 				continue
 			}
 
-		if lastFailed, found := func() (time.Time, bool) {
-			p.cdnQuarantineMu.Lock()
-			defer p.cdnQuarantineMu.Unlock()
-			t, ok := p.cdnQuarantine[cdnUrl.Host]
-			return t, ok
-		}(); found {
-			if i == len(storageResolve.Cdnurl)-1 {
-				log.WithField("host", cdnUrl.Host).Warnf("cannot skip cdn url because it is the last one")
-			} else if time.Since(lastFailed) < CdnUrlQuarantineDuration {
-				log.WithField("host", cdnUrl.Host).Infof("skipping cdn url because it has failed recently")
+			if lastFailed, found := func() (time.Time, bool) {
+				p.cdnQuarantineMu.Lock()
+				defer p.cdnQuarantineMu.Unlock()
+				t, ok := p.cdnQuarantine[cdnUrl.Host]
+				return t, ok
+			}(); found {
+				if i == len(storageResolve.Cdnurl)-1 {
+					log.WithField("host", cdnUrl.Host).Warnf("cannot skip cdn url because it is the last one")
+				} else if time.Since(lastFailed) < CdnUrlQuarantineDuration {
+					log.WithField("host", cdnUrl.Host).Infof("skipping cdn url because it has failed recently")
+					continue
+				}
+			}
+
+			var rawStream *audio.HttpChunkedReader
+			rawStream, err = audio.NewHttpChunkedReader(log, client, cdnUrl.String())
+			if err != nil {
+				log.WithError(err).WithField("host", cdnUrl.Host).Warnf("failed creating chunked reader, trying next url")
+				p.cdnQuarantineMu.Lock()
+				p.cdnQuarantine[cdnUrl.Host] = time.Now()
+				p.cdnQuarantineMu.Unlock()
 				continue
 			}
-		}
 
-		var rawStream *audio.HttpChunkedReader
-		rawStream, err = audio.NewHttpChunkedReader(log, client, cdnUrl.String())
-		if err != nil {
-			log.WithError(err).WithField("host", cdnUrl.Host).Warnf("failed creating chunked reader, trying next url")
 			p.cdnQuarantineMu.Lock()
-			p.cdnQuarantine[cdnUrl.Host] = time.Now()
+			delete(p.cdnQuarantine, cdnUrl.Host)
 			p.cdnQuarantineMu.Unlock()
-			continue
-		}
-
-		p.cdnQuarantineMu.Lock()
-		delete(p.cdnQuarantine, cdnUrl.Host)
-		p.cdnQuarantineMu.Unlock()
-		return rawStream, nil
+			return rawStream, nil
 		}
 
 		return nil, fmt.Errorf("failed creating chunked reader for any cdn url: %w", err)

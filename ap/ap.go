@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-"github.com/cenkalti/backoff/v4"
+	"github.com/cenkalti/backoff/v4"
 	librespot "github.com/elxgy/go-librespot"
 	"github.com/elxgy/go-librespot/dh"
 	pb "github.com/elxgy/go-librespot/proto/spotify"

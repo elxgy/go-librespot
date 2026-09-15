@@ -3,6 +3,7 @@ package login5
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,9 +34,11 @@ type Login5 struct {
 	clientToken string
 	clientId    string
 
-	loginOk     *pb.LoginOk
-	loginOkExp  time.Time
-	loginOkLock sync.RWMutex
+	loginOk           *pb.LoginOk
+	loginOkExp        time.Time
+	loginOkLock       sync.RWMutex
+	refreshMu         sync.Mutex
+	lastForcedRefresh time.Time
 }
 
 func NewLogin5(log librespot.Logger, client *http.Client, deviceId, clientToken, clientId string) *Login5 {
@@ -167,7 +170,8 @@ func (c *Login5) Username() string {
 	defer c.loginOkLock.RUnlock()
 
 	if c.loginOk == nil {
-		panic("login5 not authenticated")
+		c.log.Warn("login5 not authenticated")
+		return ""
 	}
 
 	return c.loginOk.Username
@@ -178,25 +182,38 @@ func (c *Login5) StoredCredential() []byte {
 	defer c.loginOkLock.RUnlock()
 
 	if c.loginOk == nil {
-		panic("login5 not authenticated")
+		c.log.Warn("login5 not authenticated")
+		return nil
 	}
 
 	return c.loginOk.StoredCredential
 }
 
+// minForcedRefreshInterval collapses bursts of 401-triggered forced refreshes
+// (spclient retries concurrent requests with force=true) into a single login.
+const minForcedRefreshInterval = 2 * time.Second
+
 func (c *Login5) AccessToken() librespot.GetLogin5TokenFunc {
 	return func(ctx context.Context, force bool) (string, error) {
+		cachedToken, cached := c.cachedToken(force)
+		if cached {
+			return cachedToken, nil
+		}
+
+		// Single-flight: serialize refreshes; double-check after acquiring in
+		// case another caller refreshed while we waited.
+		c.refreshMu.Lock()
+		defer c.refreshMu.Unlock()
+
+		if cachedToken, cached := c.cachedToken(force); cached {
+			return cachedToken, nil
+		}
+
 		c.loginOkLock.RLock()
 		if c.loginOk == nil {
-			panic("login5 not authenticated")
+			c.loginOkLock.RUnlock()
+			return "", errors.New("login5 not authenticated")
 		}
-
-		// if not asked to force a new token and not expired, just return it
-		if !force && c.loginOkExp.After(time.Now()) {
-			defer c.loginOkLock.RUnlock()
-			return c.loginOk.AccessToken, nil
-		}
-
 		username, storedCred := c.loginOk.Username, c.loginOk.StoredCredential
 		c.loginOkLock.RUnlock()
 
@@ -208,8 +225,34 @@ func (c *Login5) AccessToken() librespot.GetLogin5TokenFunc {
 			return "", fmt.Errorf("failed renewing login5 access token: %w", err)
 		}
 
-		c.loginOkLock.RLock()
-		defer c.loginOkLock.RUnlock()
-		return c.loginOk.AccessToken, nil
+		c.loginOkLock.Lock()
+		c.lastForcedRefresh = time.Now()
+		token := c.loginOk.AccessToken
+		c.loginOkLock.Unlock()
+		return token, nil
 	}
+}
+
+func (c *Login5) cachedToken(force bool) (string, bool) {
+	now := time.Now()
+
+	c.loginOkLock.Lock()
+	defer c.loginOkLock.Unlock()
+
+	if c.loginOk == nil {
+		return "", false
+	}
+
+	if force && now.Sub(c.lastForcedRefresh) < minForcedRefreshInterval {
+		// A forced refresh just happened; the 401 burst that triggered it
+		// is already covered by this token.
+		force = false
+	}
+	if force {
+		return "", false
+	}
+	if c.loginOkExp.After(now) {
+		return c.loginOk.AccessToken, true
+	}
+	return "", false
 }

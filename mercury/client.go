@@ -16,6 +16,7 @@ import (
 type hermesRequest struct {
 	header *spotifypb.MercuryHeader
 	parts  [][]byte
+	seq    uint64
 
 	resp chan hermesResponse
 }
@@ -34,6 +35,10 @@ type Client struct {
 
 	recvLoopOnce sync.Once
 
+	reqsMu  sync.Mutex
+	reqs    map[uint64]hermesRequest
+	nextSeq uint64
+
 	reqChan chan hermesRequest
 }
 
@@ -41,7 +46,7 @@ func NewClient(log librespot.Logger, accesspoint *ap.Accesspoint, baseCtx contex
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
-	c := &Client{log: log, ap: accesspoint, baseCtx: baseCtx}
+	c := &Client{log: log, ap: accesspoint, baseCtx: baseCtx, reqs: make(map[uint64]hermesRequest)}
 	c.reqChan = make(chan hermesRequest)
 	return c
 }
@@ -54,12 +59,10 @@ func (c *Client) recvLoop() {
 	ch := c.ap.Receive(ap.PacketTypeMercuryReq, ap.PacketTypeMercurySub, ap.PacketTypeMercuryUnsub, ap.PacketTypeMercuryEvent)
 	done := c.ap.Done()
 
-	seq := uint64(0)
-	reqs := map[uint64]hermesRequest{}
-
 	for {
 		select {
 		case <-done:
+			c.failPendingRequests(ap.ErrAccesspointClosed)
 			return
 		case pkt, ok := <-ch:
 			if !ok {
@@ -104,13 +107,11 @@ func (c *Client) recvLoop() {
 			var partsCount uint16
 			_ = binary.Read(resp, binary.BigEndian, &partsCount)
 
-			req, ok := reqs[respSeq]
+			req, ok := c.takeRequest(respSeq)
 			if !ok {
 				c.log.Warnf("received mercury response with invalid sequence: %d", respSeq)
 				continue
 			}
-
-			delete(reqs, respSeq)
 
 			parts := make([][]byte, partsCount)
 			for i := uint16(0); i < partsCount; i++ {
@@ -135,37 +136,66 @@ func (c *Client) recvLoop() {
 
 			req.resp <- hermesResponse{header: &header, parts: parts[1:]}
 		case req := <-c.reqChan:
-			reqSeq := seq
-			seq++
-
-			var buf bytes.Buffer
-			_ = binary.Write(&buf, binary.BigEndian, uint16(8))                // sequence length
-			_ = binary.Write(&buf, binary.BigEndian, reqSeq)                   // sequence
-			_ = binary.Write(&buf, binary.BigEndian, uint8(1))                 // flags
-			_ = binary.Write(&buf, binary.BigEndian, uint16(1+len(req.parts))) // parts count
-
-			headerBytes, err := proto.Marshal(req.header)
-			if err != nil {
-				req.resp <- hermesResponse{err: fmt.Errorf("failed marshaling mercury header: %w", err)}
-				continue
-			}
-
-			_ = binary.Write(&buf, binary.BigEndian, uint16(len(headerBytes)))
-			_, _ = buf.Write(headerBytes)
-
-			for _, part := range req.parts {
-				_ = binary.Write(&buf, binary.BigEndian, uint16(len(part)))
-				_, _ = buf.Write(part)
-			}
-
-			reqs[reqSeq] = req
-
-			if err := c.ap.Send(c.baseCtx, ap.PacketTypeMercuryReq, buf.Bytes()); err != nil {
-				delete(reqs, reqSeq)
-				req.resp <- hermesResponse{err: fmt.Errorf("failed sending mercury request: %w", err)}
-				continue
-			}
+			c.reqChanReq(req)
 		}
+	}
+}
+
+func (c *Client) reqChanReq(req hermesRequest) {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.BigEndian, uint16(8))                // sequence length
+	_ = binary.Write(&buf, binary.BigEndian, req.seq)                  // sequence
+	_ = binary.Write(&buf, binary.BigEndian, uint8(1))                 // flags
+	_ = binary.Write(&buf, binary.BigEndian, uint16(1+len(req.parts))) // parts count
+
+	headerBytes, err := proto.Marshal(req.header)
+	if err != nil {
+		c.takeRequest(req.seq)
+		req.resp <- hermesResponse{err: fmt.Errorf("failed marshaling mercury header: %w", err)}
+		return
+	}
+
+	_ = binary.Write(&buf, binary.BigEndian, uint16(len(headerBytes)))
+	_, _ = buf.Write(headerBytes)
+
+	for _, part := range req.parts {
+		_ = binary.Write(&buf, binary.BigEndian, uint16(len(part)))
+		_, _ = buf.Write(part)
+	}
+
+	if err := c.ap.Send(c.baseCtx, ap.PacketTypeMercuryReq, buf.Bytes()); err != nil {
+		c.takeRequest(req.seq)
+		req.resp <- hermesResponse{err: fmt.Errorf("failed sending mercury request: %w", err)}
+	}
+}
+
+func (c *Client) putRequest(req hermesRequest) {
+	c.reqsMu.Lock()
+	c.reqs[req.seq] = req
+	c.reqsMu.Unlock()
+}
+
+func (c *Client) takeRequest(seq uint64) (hermesRequest, bool) {
+	c.reqsMu.Lock()
+	defer c.reqsMu.Unlock()
+	req, ok := c.reqs[seq]
+	if ok {
+		delete(c.reqs, seq)
+	}
+	return req, ok
+}
+
+func (c *Client) failPendingRequests(err error) {
+	c.reqsMu.Lock()
+	pending := make([]hermesRequest, 0, len(c.reqs))
+	for seq, req := range c.reqs {
+		pending = append(pending, req)
+		delete(c.reqs, seq)
+	}
+	c.reqsMu.Unlock()
+
+	for _, req := range pending {
+		req.resp <- hermesResponse{err: err}
 	}
 }
 
@@ -192,7 +222,17 @@ func (c *Client) Request(ctx context.Context, method, uri string, fields map[str
 		parts = append(parts, payload[i:min(len(payload), i+0xffff)])
 	}
 
-	req := hermesRequest{header: header, parts: parts, resp: make(chan hermesResponse, 1)}
+	req := hermesRequest{resp: make(chan hermesResponse, 1)}
+	c.reqsMu.Lock()
+	req.seq = c.nextSeq
+	c.nextSeq++
+	c.reqsMu.Unlock()
+	req.header = header
+	req.parts = parts
+
+	c.putRequest(req)
+	defer c.takeRequest(req.seq)
+
 	select {
 	case <-done:
 		return nil, ap.ErrAccesspointClosed

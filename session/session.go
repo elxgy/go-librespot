@@ -51,7 +51,7 @@ type Session struct {
 	baseCancel context.CancelFunc
 }
 
-func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error) {
+func NewSessionFromOptions(ctx context.Context, opts *Options) (sess *Session, err error) {
 	// validate device type
 	if opts.DeviceType == devicespb.DeviceType_UNKNOWN {
 		return nil, fmt.Errorf("missing device type")
@@ -108,6 +108,14 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 	}
 	s.ap = ap.NewAccesspoint(opts.Log, apAddr, s.deviceId, s.baseCtx)
 
+	// Everything after a successful ap.Connect owns the connection: any
+	// failure below must tear it down before returning.
+	defer func() {
+		if err != nil && s.ap != nil {
+			s.ap.Close()
+		}
+	}()
+
 	// authenticate with the accesspoint using the proper credentials
 	switch creds := opts.Credentials.(type) {
 	case StoredCredentials:
@@ -162,7 +170,13 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 		url := oauthConf.AuthCodeURL("", oauth2.S256ChallengeOption(verifier))
 		opts.Log.Infof("to complete authentication visit the following link: %s", url)
 
-		code := <-codeCh
+		var code string
+		select {
+		case code = <-codeCh:
+		case <-s.baseCtx.Done():
+			serverCancel()
+			return nil, s.baseCtx.Err()
+		}
 		serverCancel()
 
 		token, err := oauthConf.Exchange(ctx, code, oauth2.VerifierOption(verifier))
@@ -170,7 +184,12 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 			return nil, fmt.Errorf("failed exchanging oauth2 code: %w", err)
 		}
 
-		if err := s.ap.ConnectSpotifyToken(ctx, token.Extra("username").(string), token.AccessToken); err != nil {
+		username, ok := token.Extra("username").(string)
+		if !ok || username == "" {
+			return nil, fmt.Errorf("oauth2 token is missing the username claim")
+		}
+
+		if err := s.ap.ConnectSpotifyToken(ctx, username, token.AccessToken); err != nil {
 			return nil, fmt.Errorf("failed authenticating accesspoint interactively: %w", err)
 		}
 	case SpotifyTokenCredentials:
@@ -182,7 +201,7 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 			return nil, fmt.Errorf("failed authenticating accesspoint with blob: %w", err)
 		}
 	default:
-		panic("unknown credentials")
+		return nil, fmt.Errorf("unknown credentials: %T", opts.Credentials)
 	}
 
 	// authenticate with login5
@@ -192,6 +211,11 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 	}); err != nil {
 		return nil, fmt.Errorf("failed authenticating with login5: %w", err)
 	}
+
+	s.hg = mercury.NewClient(opts.Log, s.ap, s.baseCtx)
+
+	// init audio key provider
+	s.audioKey = audio.NewAudioKeyProvider(opts.Log, s.ap, s.baseCtx)
 
 	// initialize spclient
 	if spAddr, err := s.resolver.GetSpclient(ctx); err != nil {
@@ -207,19 +231,14 @@ func NewSessionFromOptions(ctx context.Context, opts *Options) (*Session, error)
 	}
 	s.dealer = dealer.NewDealer(opts.Log, s.client, dealerAddr, s.login5.AccessToken(), s.baseCtx)
 
-	// initialize mercury/hermes
-	s.hg = mercury.NewClient(opts.Log, s.ap, s.baseCtx)
-
-	// init audio key provider
-	s.audioKey = audio.NewAudioKeyProvider(opts.Log, s.ap, s.baseCtx)
-
 	// init event sender
 	s.events, err = events.Plugin.NewEventManager(opts.Log, opts.AppState, s.hg, s.sp, s.ap.Username())
 	if err != nil {
 		return nil, fmt.Errorf("failed initializing event sender: %w", err)
 	}
 
-	return &s, nil
+	sess = &s
+	return sess, nil
 }
 
 func (s *Session) Close() {

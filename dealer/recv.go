@@ -9,6 +9,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"time"
 
 	connectpb "github.com/elxgy/go-librespot/proto/spotify/connectstate"
 )
@@ -125,7 +126,8 @@ func (d *Dealer) handleMessage(rawMsg *RawMessage) {
 	log := d.log.WithField("uri", rawMsg.Uri)
 
 	if len(rawMsg.Payloads) > 1 {
-		panic("unsupported number of payloads")
+		log.Warnf("unsupported number of payloads: %d", len(rawMsg.Payloads))
+		return
 	}
 
 	var matchedReceivers []messageReceiver
@@ -202,7 +204,7 @@ func (d *Dealer) ReceiveMessage(uriPrefixes ...string) <-chan Message {
 	}
 
 	d.messageReceiversLock.Lock()
-	c := make(chan Message)
+	c := make(chan Message, dealerMessageChanSize)
 	d.messageReceivers = append(d.messageReceivers, messageReceiver{uriPrefixes, c})
 
 	// start receiving if necessary
@@ -238,30 +240,37 @@ func (d *Dealer) handleRequest(rawMsg *RawMessage) {
 		return
 	}
 
-	// dispatch request
+	// Dispatch on its own goroutine: the recvLoop must never block on a slow
+	// or absent consumer, only on shutdown.
 	resp := make(chan bool, 1)
-	select {
-	case recv.c <- Request{
-		resp:         resp,
-		MessageIdent: rawMsg.MessageIdent,
-		Payload:      payload,
-	}:
-	case <-d.done:
-		return
-	}
-
-	// wait for response and send it
-	select {
-	case success := <-resp:
-		if err := d.sendReply(rawMsg.Key, success); err != nil {
-			log.WithError(err).Error("failed sending dealer reply")
+	go func() {
+		select {
+		case recv.c <- Request{
+			resp:         resp,
+			MessageIdent: rawMsg.MessageIdent,
+			Payload:      payload,
+		}:
+		case <-d.done:
 			return
 		}
-	case <-d.done:
-		return
-	}
+
+		select {
+		case success := <-resp:
+			if err := d.sendReply(rawMsg.Key, success); err != nil {
+				log.WithError(err).Error("failed sending dealer reply")
+			}
+		case <-time.After(dealerReplyTimeout):
+			log.Warn("dealer request reply timed out")
+			if err := d.sendReply(rawMsg.Key, false); err != nil {
+				log.WithError(err).Error("failed sending dealer reply")
+			}
+		case <-d.done:
+		}
+	}()
 }
 
+// A duplicate registration is a programming error, but the library must not
+// crash the host process: it returns a pre-closed channel instead.
 func (d *Dealer) ReceiveRequest(uri string) <-chan Request {
 	d.connMu.RLock()
 	select {
@@ -278,7 +287,10 @@ func (d *Dealer) ReceiveRequest(uri string) <-chan Request {
 	defer d.connMu.RUnlock()
 
 	if _, ok := d.requestReceivers[uri]; ok {
-		panic(fmt.Sprintf("cannot have more request receivers for %s", uri))
+		d.log.Errorf("duplicate request receiver for %s", uri)
+		c := make(chan Request)
+		close(c)
+		return c
 	}
 
 	// create new receiver
