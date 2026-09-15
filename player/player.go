@@ -44,6 +44,7 @@ func ptr[T any](v T) *T {
 type Player struct {
 	log librespot.Logger
 
+	crossfadeSamples          int
 	flacEnabled               bool
 	normalisationEnabled      bool
 	normalisationUseAlbumGain bool
@@ -111,6 +112,11 @@ type Options struct {
 	// When setting this to true, it is assumed that the PlayPlay plugin is provided.
 	FlacEnabled bool
 
+	// CrossfadeSamples specifies how many interleaved samples tracks should
+	// overlap during a track change (frames * Channels). Zero disables
+	// crossfading and preserves gapless behavior.
+	CrossfadeSamples int
+
 	// NormalisationEnabled specifies if the volume should be normalised according
 	// to Spotify parameters. Only track normalization is supported.
 	NormalisationEnabled bool
@@ -173,6 +179,7 @@ type Options struct {
 func NewPlayer(opts *Options) (*Player, error) {
 	p := &Player{
 		log:                       opts.Log,
+		crossfadeSamples:          max(opts.CrossfadeSamples, 0),
 		sp:                        opts.Spclient,
 		audioKey:                  opts.AudioKey,
 		events:                    opts.Events,
@@ -240,7 +247,7 @@ func (p *Player) manageLoop() {
 	volume := float32(1)
 
 	// init main source
-	source := NewSwitchingAudioSource()
+	source := NewSwitchingAudioSource(p.crossfadeSamples)
 
 loop:
 	for {
