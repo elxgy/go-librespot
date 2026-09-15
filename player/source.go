@@ -44,13 +44,27 @@ func (s *SwitchingAudioSource) Done() <-chan struct{} {
 
 func (s *SwitchingAudioSource) Read(p []float32) (n int, err error) {
 	s.cond.L.Lock()
-	defer s.cond.L.Unlock()
-
 	for s.source[s.which] == nil {
 		s.cond.Wait()
 	}
+	source := s.source[s.which]
+	which := s.which
+	s.cond.L.Unlock()
 
-	n, err = s.source[s.which].Read(p)
+	// Read without holding the lock: the decoder can block for a long time
+	// on decode/network, and holding the lock here would serialize
+	// SetPositionMs/PositionMs/Close behind an entire period read.
+	n, err = source.Read(p)
+
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+
+	if s.source[which] != source {
+		// The source was replaced or closed while reading. Report what we
+		// got and leave the switch logic to whoever mutated the state.
+		return n, err
+	}
+
 	if errors.Is(err, io.EOF) {
 		// notify this source is done. Non-blocking: if done already has
 		// a pending value, manageLoop hasn't consumed it yet so another
@@ -61,14 +75,14 @@ func (s *SwitchingAudioSource) Read(p []float32) (n int, err error) {
 		}
 
 		// if there's no other source just let the EOF through
-		if s.source[!s.which] == nil {
+		if s.source[!which] == nil {
 			return n, err
 		}
 
 		// delete current source and switch to the other one
-		_ = s.source[s.which].Close()
-		delete(s.source, s.which)
-		s.which = !s.which
+		_ = source.Close()
+		delete(s.source, which)
+		s.which = !which
 
 		// ignore the EOF, we have mode data
 		return n, nil

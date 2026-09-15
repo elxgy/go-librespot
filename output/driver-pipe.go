@@ -122,8 +122,17 @@ func (out *pipeOutput) outputLoop() {
 			out.lock.Unlock()
 			break
 		}
+		out.lock.Unlock()
 
+		// Read without holding the lock: a stalled CDN read would otherwise
+		// block pause/close for the whole decode+network duration.
 		n, err := out.reader.Read(floats)
+
+		out.lock.Lock()
+		if out.closed {
+			out.lock.Unlock()
+			break
+		}
 
 		// Apply volume.
 		if !out.externalVolume {
@@ -203,7 +212,13 @@ func (out *pipeOutput) SetVolume(vol float32) {
 		panic(fmt.Sprintf("invalid volume value: %0.2f", vol))
 	}
 
+	out.lock.Lock()
+	if vol == out.volume {
+		out.lock.Unlock()
+		return
+	}
 	out.volume = vol
+	out.lock.Unlock()
 	sendVolumeUpdate(out.volumeUpdate, vol)
 }
 

@@ -53,6 +53,7 @@ type alsaOutput struct {
 
 	volume float32
 	closed bool
+	gen    uint64
 
 	volumeUpdate chan float32
 	err          chan error
@@ -229,8 +230,10 @@ func (out *alsaOutput) setupPcm() error {
 	// Move samples from the reader out to the ALSA device.
 	// This loop continues until the PCM handle is closed and set to nil
 	// (Pause() or Close()) or there is an error.
+	out.gen++
 	pcmHandle := out.pcmHandle
-	go out.outputLoop(pcmHandle)
+	gen := out.gen
+	go out.outputLoop(pcmHandle, gen)
 
 	return nil
 }
@@ -352,7 +355,7 @@ func floatLeToS32Le(floats []float32) []C.int32_t {
 	return ints
 }
 
-func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t) {
+func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t, gen uint64) {
 	floats := make([]float32, out.channels*out.periodSize)
 
 	for {
@@ -364,10 +367,11 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t) {
 		// apparently not enough frames are ready to write even when waiting for
 		// the appropriate amount of time).
 		out.lock.Lock()
-		if pcmHandle != out.pcmHandle {
+		if pcmHandle != out.pcmHandle || gen != out.gen {
 			// Either out.pcmHandle is nil, or it is a new pcm handle entirely
 			// (with a very fast pause+resume). In both cases, the loop should
-			// be stopped.
+			// be stopped. The gen counter catches glibc reusing a closed
+			// handle's address for the reopened device.
 			out.lock.Unlock()
 			return
 		}
@@ -380,17 +384,25 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t) {
 		// that things like pause can still happen in the meantime.
 		time.Sleep(waitTime)
 
-		// Make sure we're either ready to play, or we need to stop this loop
-		// (because the ALSA output is paused/closed).
 		out.lock.Lock()
-		if pcmHandle != out.pcmHandle {
+		if pcmHandle != out.pcmHandle || gen != out.gen {
 			out.lock.Unlock()
 			return
 		}
+		out.lock.Unlock()
 
 		// Read audio data. This can take a few milliseconds because it needs to
-		// decode the audio data.
+		// decode the audio data, or much longer when the CDN connection stalls.
+		// It must not hold the lock: pause/close/delay would otherwise block
+		// for the whole read. The handle check is repeated after the read
+		// because pause may have closed the device in the meantime.
 		n, err := out.reader.Read(floats)
+
+		out.lock.Lock()
+		defer out.lock.Unlock()
+		if pcmHandle != out.pcmHandle || gen != out.gen {
+			return
+		}
 
 		// Apply volume.
 		if !out.mixerEnabled && !out.externalVolume {
@@ -420,7 +432,6 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t) {
 			default:
 				out.err <- fmt.Errorf("unsupported PCM format: %s", pcmFormatName(out.pcmFormat))
 				out.closed = true
-				out.lock.Unlock()
 				return
 			}
 
@@ -432,7 +443,6 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t) {
 					// report the error.
 					out.err <- out.alsaError("snd_pcm_recover", C.int(errCode))
 					out.closed = true
-					out.lock.Unlock()
 					return
 				}
 			}
@@ -448,19 +458,14 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t) {
 			C.snd_pcm_wait(pcmHandle, 500) // 500ms timeout
 			if errCode := C.snd_pcm_close(pcmHandle); errCode < 0 {
 				out.err <- out.alsaError("snd_pcm_close", errCode)
-				out.lock.Unlock()
 			}
-			out.lock.Unlock()
 			return
 		} else if err != nil {
 			// Got some other error. Close the output and report the error.
 			out.err <- err
 			out.closed = true
-			out.lock.Unlock()
 			return
 		}
-
-		out.lock.Unlock()
 	}
 }
 
@@ -534,12 +539,17 @@ func (out *alsaOutput) DelayMs() (int64, error) {
 func (out *alsaOutput) SetVolume(vol float32) {
 	if vol < 0 || vol > 1 {
 		panic(fmt.Sprintf("invalid volume value: %0.2f", vol))
-	} else if vol == out.volume {
-		// No need to update the volume if it didn't change.
-		return
 	}
 
+	out.lock.Lock()
+	if vol == out.volume {
+		// No need to update the volume if it didn't change.
+		out.lock.Unlock()
+		return
+	}
 	out.volume = vol
+	out.lock.Unlock()
+
 	sendVolumeUpdate(out.volumeUpdate, vol)
 
 	if out.mixerEnabled && !out.externalVolume {
