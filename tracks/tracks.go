@@ -203,6 +203,43 @@ func (tl *List) UpcomingTracks(ctx context.Context, n int) []*connectpb.Provided
 	return tracks
 }
 
+// UpcomingTracksLoaded returns the next n tracks from already-loaded pages only.
+// Unlike UpcomingTracks it never triggers a page fetch, so it is safe on the
+// state-mutating goroutine where blocking network I/O is unacceptable.
+func (tl *List) UpcomingTracksLoaded(n int) []*connectpb.ProvidedTrack {
+	if n <= 0 {
+		return nil
+	}
+
+	tracks := make([]*connectpb.ProvidedTrack, 0, n)
+
+	if len(tl.queue) > 0 {
+		queue := tl.queue
+		if tl.playingQueue {
+			queue = queue[1:]
+		}
+		for i := 0; i < len(queue) && len(tracks) < n; i++ {
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), queue[i]))
+		}
+		if len(tracks) >= n {
+			return tracks
+		}
+	}
+
+	if tl.playbackOrder != nil && tl.playbackPos >= 0 {
+		loaded := tl.tracks.len()
+		for i := tl.playbackPos + 1; i < len(tl.playbackOrder) && len(tracks) < n; i++ {
+			ctxIdx := tl.playbackOrder[i]
+			if ctxIdx >= loaded {
+				break
+			}
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), tl.tracks.list[ctxIdx].item))
+		}
+	}
+
+	return tracks
+}
+
 // WrapPlaybackFromCurrent reorders the playback order so the current track is first
 // and remaining tracks wrap around once. After this, playbackPos is 0 and
 // UpcomingTracks returns the wrapped queue. Call once at context load time.
@@ -300,6 +337,65 @@ func (tl *List) NextTracks(ctx context.Context, nextHint []*connectpb.ContextTra
 	return tracks
 }
 
+// NextTracksLoaded is the non-extending variant of NextTracks: it only reads
+// already-loaded pages and never fetches.
+func (tl *List) NextTracksLoaded(nextHint []*connectpb.ContextTrack) []*connectpb.ProvidedTrack {
+	maxT := tl.maxTracks()
+	tracks := make([]*connectpb.ProvidedTrack, 0, maxT)
+
+	if len(tl.queue) > 0 {
+		queue := tl.queue
+		if tl.playingQueue {
+			queue = queue[1:]
+		}
+
+		for i := 0; i < len(queue) && len(tracks) < maxT; i++ {
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), queue[i]))
+		}
+	}
+
+	if nextHint != nil {
+		queueLength := len(tl.queue)
+		if tl.playingQueue {
+			queueLength -= 1
+		}
+		for idx, curr := range nextHint {
+			if idx < queueLength {
+				continue
+			}
+			if !(len(tracks) < maxT) {
+				break
+			}
+
+			delete(curr.Metadata, "is_queued")
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), curr))
+		}
+		return tracks
+	}
+
+	loaded := tl.tracks.len()
+	if tl.playbackOrder != nil && tl.playbackPos >= 0 {
+		for i := tl.playbackPos + 1; i < len(tl.playbackOrder) && len(tracks) < maxT; i++ {
+			ctxIdx := tl.playbackOrder[i]
+			if ctxIdx >= loaded {
+				break
+			}
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), tl.tracks.list[ctxIdx].item))
+		}
+	} else {
+		// Playback order not built yet — fall back to context order over loaded pages
+		start := tl.tracks.pos + 1
+		if start < 0 {
+			start = 0
+		}
+		for i := start; i < loaded && len(tracks) < maxT; i++ {
+			tracks = append(tracks, librespot.ContextTrackToProvidedTrack(tl.ctx.Type(), tl.tracks.list[i].item))
+		}
+	}
+
+	return tracks
+}
+
 func (tl *List) Index() *connectpb.ContextIndex {
 	if tl.playingQueue {
 		return &connectpb.ContextIndex{}
@@ -379,6 +475,34 @@ func (tl *List) PeekNext(ctx context.Context) *connectpb.ContextTrack {
 	iter := tl.tracks.iterHere()
 	if iter.next(ctx) {
 		return iter.get().item
+	}
+
+	return nil
+}
+
+// PeekNextLoaded is the non-extending variant of PeekNext: it returns nil
+// instead of fetching when the next track is not on an already-loaded page.
+func (tl *List) PeekNextLoaded() *connectpb.ContextTrack {
+	if tl.playingQueue && len(tl.queue) > 1 {
+		return tl.queue[1]
+	} else if !tl.playingQueue && len(tl.queue) > 0 {
+		return tl.queue[0]
+	}
+
+	if tl.playbackOrder != nil && tl.playbackPos >= 0 {
+		nextPos := tl.playbackPos + 1
+		if nextPos < len(tl.playbackOrder) {
+			ctxIdx := tl.playbackOrder[nextPos]
+			if ctxIdx < tl.tracks.len() {
+				return tl.tracks.list[ctxIdx].item
+			}
+		}
+		return nil
+	}
+
+	start := tl.tracks.pos + 1
+	if start >= 0 && start < tl.tracks.len() {
+		return tl.tracks.list[start].item
 	}
 
 	return nil
