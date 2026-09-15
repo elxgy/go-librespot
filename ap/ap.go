@@ -564,7 +564,7 @@ func (ap *Accesspoint) solveChallenge(exchangeData []byte) error {
 
 func (ap *Accesspoint) authenticate(ctx context.Context, credentials *pb.LoginCredentials) error {
 	if ap.encConn == nil {
-		panic("accesspoint not connected")
+		return fmt.Errorf("accesspoint not connected")
 	}
 
 	// assemble ClientResponseEncrypted message
@@ -629,7 +629,8 @@ func (ap *Accesspoint) Username() string {
 	defer ap.connMu.RUnlock()
 
 	if ap.welcome == nil {
-		panic("accesspoint not authenticated")
+		ap.log.Warn("accesspoint not authenticated")
+		return ""
 	}
 
 	return *ap.welcome.CanonicalUsername
@@ -640,7 +641,8 @@ func (ap *Accesspoint) StoredCredentials() []byte {
 	defer ap.connMu.RUnlock()
 
 	if ap.welcome == nil {
-		panic("accesspoint not authenticated")
+		ap.log.Warn("accesspoint not authenticated")
+		return nil
 	}
 
 	return ap.welcome.ReusableAuthCredentials

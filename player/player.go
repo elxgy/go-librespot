@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	cryptorand "crypto/rand"
@@ -46,7 +47,7 @@ type Player struct {
 	normalisationEnabled      bool
 	normalisationUseAlbumGain bool
 	normalisationPregain      float32
-	countryCode               *string
+	countryCode               atomic.Pointer[string]
 
 	sp       *spclient.Spclient
 	audioKey *audio.KeyProvider
@@ -174,7 +175,6 @@ func NewPlayer(opts *Options) (*Player, error) {
 		normalisationEnabled:      opts.NormalisationEnabled,
 		normalisationUseAlbumGain: opts.NormalisationUseAlbumGain,
 		normalisationPregain:      opts.NormalisationPregain,
-		countryCode:               opts.CountryCode,
 		newOutput: func(reader librespot.Float32Reader, volume float32) (output.Output, error) {
 			return output.NewOutput(&output.NewOutputOptions{
 				Log:              opts.Log,
@@ -199,6 +199,10 @@ func NewPlayer(opts *Options) (*Player, error) {
 		ev:   make(chan Event, 128),
 		done: make(chan struct{}),
 	}
+	if opts.CountryCode != nil {
+		cc := *opts.CountryCode
+		p.countryCode.Store(&cc)
+	}
 
 	go p.manageLoop()
 
@@ -206,6 +210,10 @@ func NewPlayer(opts *Options) (*Player, error) {
 }
 
 var ErrPlayerClosed = errors.New("player: already closed")
+
+func (p *Player) SetCountryCode(code string) {
+	p.countryCode.Store(&code)
+}
 
 func (p *Player) sendCmd(cmd playerCmd) bool {
 	select {
@@ -645,13 +653,13 @@ func (p *Player) getUnrestrictedTrack(ctx context.Context, spotId librespot.Spot
 	}
 
 	media := librespot.NewMediaFromTrack(&trackMeta)
-	if !isMediaRestricted(media, *p.countryCode) {
+	if !isMediaRestricted(media, *p.countryCode.Load()) {
 		return &trackMeta, &audioFilesResp, nil
 	}
 
 	for _, alt := range trackMeta.Alternative {
 		media = librespot.NewMediaFromTrack(alt)
-		if !isMediaRestricted(media, *p.countryCode) {
+		if !isMediaRestricted(media, *p.countryCode.Load()) {
 			trackMeta.Alternative = nil
 			trackMeta.Gid = alt.Gid
 			trackMeta.File = alt.File
@@ -727,7 +735,7 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 		}
 
 		media = librespot.NewMediaFromEpisode(&episodeMeta)
-		if isMediaRestricted(media, *p.countryCode) {
+		if isMediaRestricted(media, *p.countryCode.Load()) {
 			return nil, librespot.ErrMediaRestricted
 		}
 
@@ -807,8 +815,10 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 		}
 
 		if vorbisStream.SampleRate != SampleRate {
+			_ = vorbisStream.Close()
 			return nil, fmt.Errorf("unsupported sample rate: %d", vorbisStream.SampleRate)
 		} else if vorbisStream.Channels != Channels {
+			_ = vorbisStream.Close()
 			return nil, fmt.Errorf("unsupported channels: %d", vorbisStream.Channels)
 		}
 
@@ -821,8 +831,10 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 		}
 
 		if flacStream.SampleRate != SampleRate {
+			_ = flacStream.Close()
 			return nil, fmt.Errorf("unsupported sample rate: %d", flacStream.SampleRate)
 		} else if flacStream.Channels != Channels {
+			_ = flacStream.Close()
 			return nil, fmt.Errorf("unsupported channels: %d", flacStream.Channels)
 		}
 

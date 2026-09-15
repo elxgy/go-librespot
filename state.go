@@ -28,6 +28,9 @@ func (s *AppState) SetLogger(log Logger) {
 }
 
 func (s *AppState) Read(configDir string) error {
+	s.Lock()
+	defer s.Unlock()
+
 	s.path = filepath.Join(configDir, "state.json")
 
 	if content, err := os.ReadFile(s.path); err == nil {

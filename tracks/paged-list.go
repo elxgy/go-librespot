@@ -7,7 +7,6 @@ import (
 	"io"
 
 	librespot "github.com/elxgy/go-librespot"
-	"math/rand/v2"
 )
 
 type pagedListItem[T any] struct {
@@ -130,101 +129,6 @@ func (l *pagedList[T]) swap(i, j int) {
 	} else if j == l.pos {
 		l.pos = i
 	}
-}
-
-func (l *pagedList[T]) shuffle(rnd *rand.Rand) {
-	if len(l.list) <= 1 {
-		return
-	}
-
-	idx := l.pos
-	for i := len(l.list) - 1; i > 0; i-- {
-		j := rnd.IntN(i + 1)
-		l.list[i], l.list[j] = l.list[j], l.list[i]
-		if i == idx {
-			idx = j
-		} else if j == idx {
-			idx = i
-		}
-	}
-	l.pos = idx
-}
-
-func (l *pagedList[T]) unshuffle(rnd *rand.Rand) {
-	if len(l.list) <= 1 {
-		return
-	}
-
-	exchanges := make([]int, len(l.list)-1)
-	for i := 0; i < len(l.list)-1; i++ {
-		exchanges[i] = rnd.IntN(len(l.list) - i)
-	}
-
-	idx := l.pos
-	for i := 1; i < len(l.list); i++ {
-		j := exchanges[len(l.list)-i-1]
-		l.list[i], l.list[j] = l.list[j], l.list[i]
-		if i == idx {
-			idx = j
-		} else if j == idx {
-			idx = i
-		}
-	}
-	l.pos = idx
-}
-
-// shuffleFromOffset shuffles only list[offset:], leaving list[:offset] untouched.
-// Tracks before offset stay in their original order and positions.
-func (l *pagedList[T]) shuffleFromOffset(rnd *rand.Rand, offset int) {
-	n := len(l.list)
-	if offset >= n-1 {
-		return
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	idx := l.pos
-	for i := n - 1; i > offset; i-- {
-		j := offset + rnd.IntN(i-offset+1)
-		l.list[i], l.list[j] = l.list[j], l.list[i]
-		if i == idx {
-			idx = j
-		} else if j == idx {
-			idx = i
-		}
-	}
-	l.pos = idx
-}
-
-// unshuffleFromOffset reverses shuffleFromOffset on list[offset:].
-func (l *pagedList[T]) unshuffleFromOffset(rnd *rand.Rand, offset int) {
-	n := len(l.list)
-	if offset >= n-1 {
-		return
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	subLen := n - offset
-	exchanges := make([]int, subLen-1)
-	for i := 0; i < subLen-1; i++ {
-		exchanges[i] = rnd.IntN(subLen - i)
-	}
-
-	idx := l.pos
-	for i := 1; i < subLen; i++ {
-		actualI := offset + i
-		actualJ := offset + exchanges[subLen-i-1]
-		l.list[actualI], l.list[actualJ] = l.list[actualJ], l.list[actualI]
-		if actualI == idx {
-			idx = actualJ
-		} else if actualJ == idx {
-			idx = actualI
-		}
-	}
-	l.pos = idx
 }
 
 func (l *pagedList[T]) fetchNextPage(ctx context.Context) (int, error) {
