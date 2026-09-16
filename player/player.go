@@ -246,6 +246,9 @@ func (p *Player) manageLoop() {
 	// initial volume is 1
 	volume := float32(1)
 
+	// whether the output is paused, so seek knows whether to resume after Drop
+	paused := false
+
 	// init main source
 	source := NewSwitchingAudioSource(p.crossfadeSamples)
 
@@ -281,6 +284,13 @@ loop:
 					p.log.Debugf("created new output device")
 				}
 
+				// Flush the previous source BEFORE switching, otherwise the
+				// new track's opening is buffered then dropped, clipping it
+				// on pulseaudio (#292). Drop no longer restarts the stream.
+				if data.drop {
+					_ = out.Drop()
+				}
+
 				// set source
 				source.SetPrimary(data.source)
 				if data.paused {
@@ -294,10 +304,7 @@ loop:
 						break
 					}
 				}
-
-				if data.drop {
-					_ = out.Drop()
-				}
+				paused = data.paused
 
 				p.startedPlaying = time.Now()
 				cmd.resp <- nil
@@ -312,6 +319,7 @@ loop:
 					if err := out.Resume(); err != nil {
 						cmd.resp <- err
 					} else {
+						paused = false
 						cmd.resp <- nil
 						p.ev <- Event{Type: EventTypeResume}
 					}
@@ -323,6 +331,7 @@ loop:
 					if err := out.Pause(); err != nil {
 						cmd.resp <- err
 					} else {
+						paused = true
 						cmd.resp <- nil
 						p.ev <- Event{Type: EventTypePause}
 					}
@@ -347,7 +356,11 @@ loop:
 					} else if err = out.Drop(); err != nil {
 						cmd.resp <- err
 					} else {
-						cmd.resp <- nil
+						// Drop no longer restarts the stream; resume unless paused.
+						if !paused {
+							err = out.Resume()
+						}
+						cmd.resp <- err
 					}
 				} else {
 					cmd.resp <- nil
