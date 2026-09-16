@@ -540,6 +540,47 @@ type ResolvedEntry struct {
 	Name       string
 	Artist     string
 	DurationMS int
+	// AlbumCoverFileId is the best album cover image id for the "default"
+	// size, or nil when the entry has no cover art.
+	AlbumCoverFileId []byte
+}
+
+func resolvedEntryFromTrack(track *metadatapb.Track) ResolvedEntry {
+	var entry ResolvedEntry
+	if track.Name != nil {
+		entry.Name = *track.Name
+	}
+	if len(track.Artist) > 0 && track.Artist[0].Name != nil {
+		entry.Artist = *track.Artist[0].Name
+	}
+	if track.Duration != nil {
+		entry.DurationMS = int(*track.Duration)
+	}
+	if track.Album != nil {
+		albumCoverId := librespot.GetBestImageIdForSize(track.Album.Cover, "default")
+		if albumCoverId == nil && track.Album.CoverGroup != nil {
+			albumCoverId = librespot.GetBestImageIdForSize(track.Album.CoverGroup.Image, "default")
+		}
+		entry.AlbumCoverFileId = albumCoverId
+	}
+	return entry
+}
+
+func resolvedEntryFromEpisode(ep *metadatapb.Episode) ResolvedEntry {
+	var entry ResolvedEntry
+	if ep.Name != nil {
+		entry.Name = *ep.Name
+	}
+	if ep.Show != nil && ep.Show.Name != nil {
+		entry.Artist = *ep.Show.Name
+	}
+	if ep.Duration != nil {
+		entry.DurationMS = int(*ep.Duration)
+	}
+	if ep.CoverImage != nil {
+		entry.AlbumCoverFileId = librespot.GetBestImageIdForSize(ep.CoverImage.Image, "default")
+	}
+	return entry
 }
 
 // ResolveTrackOrEpisodeMetadataBatch resolves metadata for multiple URIs in a single
@@ -597,29 +638,13 @@ func (c *Spclient) ResolveTrackOrEpisodeMetadataBatch(ctx context.Context, uris 
 				if err := extData.ExtensionData.UnmarshalTo(&track); err != nil {
 					continue
 				}
-				if track.Name != nil {
-					entry.Name = *track.Name
-				}
-				if len(track.Artist) > 0 && track.Artist[0].Name != nil {
-					entry.Artist = *track.Artist[0].Name
-				}
-				if track.Duration != nil {
-					entry.DurationMS = int(*track.Duration)
-				}
+				entry = resolvedEntryFromTrack(&track)
 			case extmetadatapb.ExtensionKind_EPISODE_V4:
 				var ep metadatapb.Episode
 				if err := extData.ExtensionData.UnmarshalTo(&ep); err != nil {
 					continue
 				}
-				if ep.Name != nil {
-					entry.Name = *ep.Name
-				}
-				if ep.Show != nil && ep.Show.Name != nil {
-					entry.Artist = *ep.Show.Name
-				}
-				if ep.Duration != nil {
-					entry.DurationMS = int(*ep.Duration)
-				}
+				entry = resolvedEntryFromEpisode(&ep)
 			default:
 				continue
 			}
