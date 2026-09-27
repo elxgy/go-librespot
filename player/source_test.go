@@ -971,3 +971,147 @@ func TestPauseDuringCrossfade(t *testing.T) {
 		t.Fatal("fade should be finished after draining")
 	}
 }
+
+// TestReadDirectWrapsCurrentSourceError locks in the stale-stop contract:
+// a read failure on the source the slot still names is tagged with that
+// source, so the embedder can tell it apart from a failure that predates
+// the currently loaded track. The message and matching behavior are
+// unchanged (Error verbatim, Is/As through Unwrap).
+func TestReadDirectWrapsCurrentSourceError(t *testing.T) {
+	s := NewSwitchingAudioSource(0)
+	sentinel := errors.New("boom")
+	src := &fakeSource{failAt: 0, failErr: sentinel}
+	s.SetPrimary(src)
+
+	_, err := s.Read(make([]float32, 128))
+	if err == nil {
+		t.Fatal("expected the decoder error, got nil")
+	}
+	var tagged *SourceError
+	if !errors.As(err, &tagged) {
+		t.Fatalf("expected a *SourceError, got %T (%v)", err, err)
+	}
+	if tagged.Source != src {
+		t.Fatal("expected the tag to name the failing source")
+	}
+	if err.Error() != sentinel.Error() {
+		t.Fatalf("expected the message to stay %q, got %q", sentinel.Error(), err.Error())
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatal("expected errors.Is to see through the wrapper")
+	}
+}
+
+// TestReadDirectTerminalErrorUnwrapped pins the other half of the contract:
+// the terminal error after a stop/close names no live source, so it must
+// stay unwrapped (nil tag) and keep the previous handling.
+func TestReadDirectTerminalErrorUnwrapped(t *testing.T) {
+	s := NewSwitchingAudioSource(0)
+	closedErr := errors.New("decoder: decoder has already been closed")
+	old := newSwitchRacySource(closedErr)
+	s.SetPrimary(old)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := s.Read(make([]float32, 128))
+		errCh <- err
+	}()
+
+	<-old.entered
+	if err := s.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+	close(old.release)
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, closedErr) {
+			t.Fatalf("expected the terminal error, got %v", err)
+		}
+		var tagged *SourceError
+		if errors.As(err, &tagged) {
+			t.Fatal("terminal errors must not carry a source tag")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("read did not return after close")
+	}
+}
+
+// TestReadDirectConvergesAcrossDoubleDisplacement covers the trickiest
+// interleaving the retry loop must survive: the in-flight read fails after
+// TWO switches (A displaced by B, B displaced by C before the retry runs).
+// The error must never surface; the read converges on the live source.
+func TestReadDirectConvergesAcrossDoubleDisplacement(t *testing.T) {
+	s := NewSwitchingAudioSource(0)
+	a := newSwitchRacySource(errors.New("decoder: decoder has already been closed"))
+	s.SetPrimary(a)
+
+	resCh := make(chan float32, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		buf := make([]float32, 64)
+		n, err := s.Read(buf)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if n == 0 {
+			errCh <- errors.New("expected samples from the live source")
+			return
+		}
+		resCh <- buf[0]
+	}()
+
+	<-a.entered
+	// B is displaced before it is ever read; its release is never closed
+	// and must not be needed.
+	b := newSwitchRacySource(errors.New("decoder: decoder has already been closed"))
+	s.SetPrimary(b)
+	s.SetPrimary(constSource(64, 0.5, 0))
+	close(a.release)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("double displacement must converge on the live source, got error %v", err)
+	case v := <-resCh:
+		if v != 0.5 {
+			t.Fatalf("expected samples from the live source, got %v", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("read did not return after double displacement")
+	}
+}
+
+// TestReadFadeLockedWrapsCurrentSourceError is the crossfade twin of the
+// direct-path tag test: a fade-in read failure on the verified-current
+// source carries that source.
+func TestReadFadeLockedWrapsCurrentSourceError(t *testing.T) {
+	const fade = 800
+	sentinel := errors.New("boom")
+	a := constSource(2000, 0.5, 0)
+	b := &fakeSource{samples: make([]float32, 300), failAt: 0, failErr: sentinel}
+
+	s := NewSwitchingAudioSource(fade)
+	s.SetPrimary(a)
+	s.SetSecondary(b)
+
+	// Drive reads manually: the read that engages the fade also performs
+	// the first fade-in read on B, so readUntilFading's no-error contract
+	// cannot hold here. The only possible error is B failing fade-in.
+	buf := make([]float32, 100)
+	for i := 0; i < 1000; i++ {
+		_, err := s.Read(buf)
+		if err == nil {
+			continue
+		}
+		var tagged *SourceError
+		if !errors.As(err, &tagged) {
+			t.Fatalf("expected a *SourceError from the fade-in read, got %v", err)
+		}
+		if tagged.Source != b {
+			t.Fatal("expected the tag to name the fade-in source")
+		}
+		return
+	}
+	t.Fatal("fade-in read never failed")
+}

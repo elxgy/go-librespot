@@ -19,6 +19,12 @@ const (
 
 type Event struct {
 	Type EventType
+	// Source names the audio source that failed for EventTypeStop.
+	// It is nil for explicit stops and for stops whose failing source
+	// is unknown; embedders must handle a nil source exactly as before
+	// and only use a non-nil source to discard stops for a track that
+	// has since been replaced.
+	Source librespot.AudioSource
 }
 
 type EventManager interface {

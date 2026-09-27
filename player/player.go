@@ -401,8 +401,17 @@ loop:
 			if err != nil {
 				p.log.Tracef("cleared closed output device")
 
+				// Carry the failing source when the read path tagged
+				// it, so the embedder can ignore stops that predate
+				// the currently loaded track. Untagged (nil) stops
+				// keep the previous behavior.
 				// FIXME: this is called even if not needed, like when autoplay starts
-				p.ev <- Event{Type: EventTypeStop}
+				var failedSource librespot.AudioSource
+				var sourceErr *SourceError
+				if errors.As(err, &sourceErr) {
+					failedSource = sourceErr.Source
+				}
+				p.ev <- Event{Type: EventTypeStop, Source: failedSource}
 			} else {
 				// nil error means the output finished after a natural EOF: same
 				// flow as the source-done signal so the next track loads.

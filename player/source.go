@@ -20,6 +20,21 @@ const maxSampleValue = float32(0x7fff) / float32(0x8000)
 // available when the end of a track is discovered.
 const lookaheadHeadroom = 8 * 1024
 
+// SourceError tags a read failure with the audio source that produced it.
+// The output loop reads the current source while the manage loop may replace
+// it at any time, so by the time a failure is handled the slot can name a
+// different (healthy) track: without the tag the embedder cannot tell a
+// stale failure for a superseded track from a live one and reloads whatever
+// happens to be current. Error() reports the inner message verbatim so log
+// lines and errors.Is/As matching behave exactly as before.
+type SourceError struct {
+	Source librespot.AudioSource
+	Err    error
+}
+
+func (e *SourceError) Error() string { return e.Err.Error() }
+func (e *SourceError) Unwrap() error { return e.Err }
+
 type SwitchingAudioSource struct {
 	source map[bool]librespot.AudioSource
 	which  bool
@@ -212,7 +227,10 @@ func (s *SwitchingAudioSource) readDirect(p []float32) (n int, err error) {
 		// ignore the EOF, we have mode data
 		return n, nil
 	} else if err != nil {
-		return n, err
+		// The slot still names this source, so the failure is live:
+		// tag it so the embedder can tell it apart from a stale
+		// failure for a track that has since been replaced.
+		return n, &SourceError{Source: source, Err: err}
 	}
 
 	return n, nil
@@ -399,7 +417,11 @@ func (s *SwitchingAudioSource) readFadeLocked(p []float32) (n int, err error) {
 			return 0, nil
 		}
 		if rerr != nil && !errors.Is(rerr, io.EOF) {
-			return 0, rerr
+			// src is verified current above: same stale-vs-live tag
+			// as the direct path. Errors stashed in pendingErr stay
+			// untagged (their currency is unknown at delivery time)
+			// and are handled exactly as before.
+			return 0, &SourceError{Source: src, Err: rerr}
 		}
 	}
 
