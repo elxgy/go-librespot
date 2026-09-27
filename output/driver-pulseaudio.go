@@ -4,11 +4,19 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	librespot "github.com/elxgy/go-librespot"
 	"github.com/jfreymuth/pulse"
 	"github.com/jfreymuth/pulse/proto"
 )
+
+// pulseStartTimeout bounds PlaybackStream.Start, which blocks until the
+// server answers with Started. The ack is conditional (dropped on underflow,
+// dead sink, or lost connection) and Start has no timeout or context, so an
+// unanswered Start used to park manageLoop forever — and with it every
+// player command. A healthy local server acks in milliseconds.
+const pulseStartTimeout = 5 * time.Second
 
 type pulseAudioOutput struct {
 	log librespot.Logger
@@ -148,8 +156,34 @@ func (out *pulseAudioOutput) Resume() error {
 	// Start the stream. This will start reading samples from out.reader and
 	// push it to PulseAudio. It will do nothing if the playback is already
 	// started.
-	out.stream.Start()
-	return nil
+	if out.stream.Running() {
+		return nil
+	}
+
+	// Start blocks on the unbuffered `started` ack channel, so it runs on
+	// its own goroutine under a deadline. The waiter is kept until the ack
+	// arrives even after a timeout: a late Started with nobody receiving
+	// would block the client's callback loop instead. The waiter can still
+	// strand forever when no ack is ever sent (stream deleted, server lost,
+	// underflow won the race) — one parked goroutine per timed-out Start,
+	// a bounded cost per failure, not per track.
+	done := make(chan struct{}, 1)
+	go func() {
+		out.stream.Start()
+		done <- struct{}{}
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-time.After(pulseStartTimeout):
+		// Start sets the stream state to running BEFORE waiting for the
+		// ack, so without this the next Resume short-circuits on
+		// Running() and succeeds forever on a dead stream. Stop only
+		// flips the guarded state machine back to idle (it never touches
+		// the parked waiter), so the retry below really re-Starts.
+		out.stream.Stop()
+		return fmt.Errorf("pulseaudio Start: no Started ack after %s (sink gone or server stalled)", pulseStartTimeout)
+	}
 }
 
 func (out *pulseAudioOutput) Drop() error {

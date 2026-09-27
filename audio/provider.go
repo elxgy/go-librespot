@@ -34,6 +34,51 @@ type KeyProvider struct {
 	reqsMu  sync.Mutex
 	reqs    map[uint32]keyRequest
 	nextSeq uint32
+
+	// Rate-limit state for the unmatched-response warning below. The
+	// server keeps pushing key packets the client has nothing outstanding
+	// for (late answers to timed-out requests, duplicates, short error
+	// packets); unthrottled, that warning once filled 99% of a 1.35 GB log.
+	warnMu               sync.Mutex
+	lastInvalidSeqWarn   time.Time
+	suppressedInvalidSeq int
+}
+
+// invalidSeqWarnInterval caps the unmatched-response warning: key traffic
+// is ~1 request per track, so anything above this rate is server-push noise
+// by definition.
+const invalidSeqWarnInterval = 5 * time.Second
+
+// parseKeyResponseSeq extracts the request sequence from a key response
+// payload. Short packets cannot carry a sequence (binary.Read would leave
+// zero and masquerade as "invalid sequence: 0") and are never actionable.
+func parseKeyResponseSeq(payload []byte) (uint32, bool) {
+	if len(payload) < 4 {
+		return 0, false
+	}
+	var seq uint32
+	if err := binary.Read(bytes.NewReader(payload), binary.BigEndian, &seq); err != nil {
+		return 0, false
+	}
+	return seq, true
+}
+
+func (p *KeyProvider) warnInvalidSeq(seq uint32) {
+	p.warnMu.Lock()
+	defer p.warnMu.Unlock()
+
+	now := time.Now()
+	if now.Sub(p.lastInvalidSeqWarn) < invalidSeqWarnInterval {
+		p.suppressedInvalidSeq++
+		return
+	}
+	p.lastInvalidSeqWarn = now
+	if p.suppressedInvalidSeq > 0 {
+		p.log.Warnf("received aes key with invalid sequence: %d (suppressed %d similar)", seq, p.suppressedInvalidSeq)
+		p.suppressedInvalidSeq = 0
+	} else {
+		p.log.Warnf("received aes key with invalid sequence: %d", seq)
+	}
 }
 
 type keyRequest struct {
@@ -75,13 +120,16 @@ func (p *KeyProvider) recvLoop() {
 				return
 			}
 
-			resp := bytes.NewReader(pkt.Payload)
-			var respSeq uint32
-			_ = binary.Read(resp, binary.BigEndian, &respSeq)
+			respSeq, ok := parseKeyResponseSeq(pkt.Payload)
+			if !ok {
+				p.log.Debugf("received short aes key packet of %d bytes, dropping", len(pkt.Payload))
+				continue
+			}
 
+			resp := bytes.NewReader(pkt.Payload[4:])
 			req, ok := p.takeRequest(respSeq)
 			if !ok {
-				p.log.Warnf("received aes key with invalid sequence: %d", respSeq)
+				p.warnInvalidSeq(respSeq)
 				continue
 			}
 

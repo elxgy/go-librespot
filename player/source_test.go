@@ -30,6 +30,21 @@ func (s *countingSource) closeCount() int {
 	return s.closes
 }
 
+// waitForCloses polls for the detached close: SetPrimary/SetSecondary no
+// longer close the displaced decoder inline (it would park the caller
+// behind an in-flight read), so tests must allow the goroutine to run.
+func waitForCloses(t *testing.T, s *countingSource, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.closeCount() == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("expected %d closes, got %d", want, s.closeCount())
+}
+
 func TestSetPrimaryClosesDisplacedSource(t *testing.T) {
 	s := NewSwitchingAudioSource(0)
 	first := &countingSource{}
@@ -38,9 +53,7 @@ func TestSetPrimaryClosesDisplacedSource(t *testing.T) {
 	s.SetPrimary(first)
 	s.SetPrimary(second)
 
-	if first.closeCount() != 1 {
-		t.Fatalf("expected displaced primary to be closed once, got %d", first.closeCount())
-	}
+	waitForCloses(t, first, 1)
 	if second.closeCount() != 0 {
 		t.Fatalf("expected current primary to stay open, got %d closes", second.closeCount())
 	}
@@ -60,9 +73,7 @@ func TestSetSecondaryClosesDisplacedSource(t *testing.T) {
 	s.SetSecondary(first)
 	s.SetSecondary(second)
 
-	if first.closeCount() != 1 {
-		t.Fatalf("expected displaced secondary to be closed once, got %d", first.closeCount())
-	}
+	waitForCloses(t, first, 1)
 	if second.closeCount() != 0 {
 		t.Fatalf("expected current secondary to stay open, got %d closes", second.closeCount())
 	}
@@ -80,6 +91,99 @@ func TestSetPrimaryDoesNotCloseSourceInOtherSlot(t *testing.T) {
 	// The old primary is displaced (closed), but the secondary slot is untouched.
 	if secondary.closeCount() != 0 {
 		t.Fatalf("expected secondary to stay open, got %d closes", secondary.closeCount())
+	}
+}
+
+// switchRacySource blocks in Read until released, letting a test displace
+// it mid-read to simulate a track switch racing the output goroutine.
+type switchRacySource struct {
+	enterOnce sync.Once
+	entered   chan struct{}
+	release   chan struct{}
+	err       error
+}
+
+func newSwitchRacySource(err error) *switchRacySource {
+	return &switchRacySource{entered: make(chan struct{}), release: make(chan struct{}), err: err}
+}
+
+func (s *switchRacySource) Read(p []float32) (int, error) {
+	s.enterOnce.Do(func() { close(s.entered) })
+	<-s.release
+	return 0, s.err
+}
+func (s *switchRacySource) Close() error              { return nil }
+func (s *switchRacySource) SetPositionMs(int64) error { return nil }
+func (s *switchRacySource) PositionMs() int64         { return 0 }
+
+func TestReadDirectRetriesWhenSourceDisplacedMidRead(t *testing.T) {
+	s := NewSwitchingAudioSource(0)
+	closedErr := errors.New("decoder: decoder has already been closed")
+	old := newSwitchRacySource(closedErr)
+	s.SetPrimary(old)
+
+	type result struct {
+		n   int
+		err error
+		buf []float32
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		buf := make([]float32, 128)
+		n, err := s.Read(buf)
+		resCh <- result{n, err, append([]float32(nil), buf[:n]...)}
+	}()
+
+	// Wait until the reader is inside the old source, then switch tracks
+	// and let the old read fail as a displaced close would make it fail.
+	<-old.entered
+	next := constSource(64, 0.5, 0)
+	s.SetPrimary(next)
+	close(old.release)
+
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			t.Fatalf("expected re-read from the live source, got error %v", res.err)
+		}
+		if res.n == 0 {
+			t.Fatal("expected samples from the live source, got none")
+		}
+		for _, v := range res.buf {
+			if v != 0.5 {
+				t.Fatalf("expected samples from the live source, got %v", v)
+			}
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("read did not return after displacement")
+	}
+}
+
+func TestReadDirectPropagatesErrorWhenSlotCleared(t *testing.T) {
+	s := NewSwitchingAudioSource(0)
+	closedErr := errors.New("decoder: decoder has already been closed")
+	old := newSwitchRacySource(closedErr)
+	s.SetPrimary(old)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := s.Read(make([]float32, 128))
+		errCh <- err
+	}()
+
+	<-old.entered
+	if err := s.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+	close(old.release)
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, closedErr) {
+			t.Fatalf("expected the terminal error after a stop, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("read did not return after close")
 	}
 }
 

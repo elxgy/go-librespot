@@ -399,8 +399,8 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t, gen uint64) {
 		n, err := out.reader.Read(floats)
 
 		out.lock.Lock()
-		defer out.lock.Unlock()
 		if pcmHandle != out.pcmHandle || gen != out.gen {
+			out.lock.Unlock()
 			return
 		}
 
@@ -432,6 +432,7 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t, gen uint64) {
 			default:
 				out.err <- fmt.Errorf("unsupported PCM format: %s", pcmFormatName(out.pcmFormat))
 				out.closed = true
+				out.lock.Unlock()
 				return
 			}
 
@@ -443,6 +444,7 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t, gen uint64) {
 					// report the error.
 					out.err <- out.alsaError("snd_pcm_recover", C.int(errCode))
 					out.closed = true
+					out.lock.Unlock()
 					return
 				}
 			}
@@ -451,14 +453,26 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t, gen uint64) {
 		if errors.Is(err, io.EOF) {
 			// Reached EOF, drain remaining audio before closing.
 			// Without drain(), up to 500ms of buffered audio is lost.
-			// Use non-blocking drain with a timeout to avoid deadlock.
+			// The drain runs unlocked: Pause/Close/Delay see a nil
+			// handle and no-op while the device drains instead of
+			// stalling behind the lock for the whole drain+wait.
 			out.pcmHandle = nil
+			out.lock.Unlock()
 			C.snd_pcm_nonblock(pcmHandle, 1)
 			C.snd_pcm_drain(pcmHandle)
 			C.snd_pcm_wait(pcmHandle, 500) // 500ms timeout
-			if errCode := C.snd_pcm_close(pcmHandle); errCode < 0 {
+			errCode := C.snd_pcm_close(pcmHandle)
+			out.lock.Lock()
+			if out.closed {
+				// Close ran while the device drained; it owns the
+				// teardown, so report nothing.
+				out.lock.Unlock()
+				return
+			}
+			if errCode < 0 {
 				out.err <- out.alsaError("snd_pcm_close", errCode)
 				out.closed = true
+				out.lock.Unlock()
 				return
 			}
 			// Mark the output dead and report a nil error so manageLoop
@@ -466,13 +480,17 @@ func (out *alsaOutput) outputLoop(pcmHandle *C.snd_pcm_t, gen uint64) {
 			// this output would reopen the device with no writer loop.
 			out.closed = true
 			out.err <- nil
+			out.lock.Unlock()
 			return
 		} else if err != nil {
 			// Got some other error. Close the output and report the error.
 			out.err <- err
 			out.closed = true
+			out.lock.Unlock()
 			return
 		}
+
+		out.lock.Unlock()
 	}
 }
 

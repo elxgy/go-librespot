@@ -106,11 +106,11 @@ func (s *SwitchingAudioSource) SetPrimary(source librespot.AudioSource) {
 	s.cond.Broadcast()
 	s.cond.L.Unlock()
 
-	// Close the displaced decoder outside the lock: decoder Close waits on
-	// the decoder's own mutex, which an in-flight Read holds for as long as
-	// the decode+network read takes.
+	// Close the displaced decoder off this goroutine (see closeDetached):
+	// decoder Close waits on the decoder's own lock, which an in-flight
+	// Read holds for as long as the decode+network read takes.
 	if displaced != nil && displaced != source {
-		_ = displaced.Close()
+		closeDetached(displaced)
 	}
 }
 
@@ -121,10 +121,23 @@ func (s *SwitchingAudioSource) SetSecondary(source librespot.AudioSource) {
 	s.cond.Broadcast()
 	s.cond.L.Unlock()
 
-	// See SetPrimary: close outside the lock.
 	if old != nil && old != source {
-		_ = old.Close()
+		closeDetached(old)
 	}
+}
+
+// closeDetached closes a displaced decoder off the caller's goroutine.
+// Decoder Close waits on the decoder's own lock, which an in-flight Read
+// holds across decode+network; closing inline would park manageLoop behind
+// a stalled read. The decoder is already unlinked from the map, so no new
+// read can start on it — an in-flight read either finishes first or fails
+// with the decoder's closed error, which the read paths treat as
+// displacement, never a use-after-free (both decoders reject post-close
+// reads via a closed flag).
+func closeDetached(source librespot.AudioSource) {
+	go func() {
+		_ = source.Close()
+	}()
 }
 
 func (s *SwitchingAudioSource) Done() <-chan struct{} {
@@ -140,27 +153,45 @@ func (s *SwitchingAudioSource) Read(p []float32) (n int, err error) {
 
 // readDirect is the original, crossfade-free read path.
 func (s *SwitchingAudioSource) readDirect(p []float32) (n int, err error) {
-	s.cond.L.Lock()
-	for s.source[s.which] == nil {
-		s.cond.Wait()
+	var source librespot.AudioSource
+	var which bool
+	for {
+		s.cond.L.Lock()
+		for s.source[s.which] == nil {
+			s.cond.Wait()
+		}
+		source = s.source[s.which]
+		which = s.which
+		s.cond.L.Unlock()
+
+		// Read without holding the lock: the decoder can block for a long
+		// time on decode/network, and holding the lock here would serialize
+		// SetPositionMs/PositionMs/Close behind an entire period read.
+		n, err = source.Read(p)
+
+		s.cond.L.Lock()
+		if s.source[which] == source {
+			s.cond.L.Unlock()
+			break
+		}
+		// The source was replaced or closed while reading.
+		current := s.source[which]
+		s.cond.L.Unlock()
+
+		if err == nil || current == nil {
+			// Unchanged behavior: stale samples, or the terminal error
+			// after a stop/close that emptied the slot, go to the caller.
+			return n, err
+		}
+		// A live replacement took over mid-read: the error is an artifact
+		// of the switch (typically the displaced decoder was closed under
+		// us), not a media failure. Re-read from the live source instead
+		// of failing the output over the previous track's stream.
 	}
-	source := s.source[s.which]
-	which := s.which
-	s.cond.L.Unlock()
 
-	// Read without holding the lock: the decoder can block for a long time
-	// on decode/network, and holding the lock here would serialize
-	// SetPositionMs/PositionMs/Close behind an entire period read.
-	n, err = source.Read(p)
-
+	// The source is unchanged: the switch below mutates shared state.
 	s.cond.L.Lock()
 	defer s.cond.L.Unlock()
-
-	if s.source[which] != source {
-		// The source was replaced or closed while reading. Report what we
-		// got and leave the switch logic to whoever mutated the state.
-		return n, err
-	}
 
 	if errors.Is(err, io.EOF) {
 		// notify this source is done. Non-blocking: if done already has
