@@ -1115,3 +1115,51 @@ func TestReadFadeLockedWrapsCurrentSourceError(t *testing.T) {
 	}
 	t.Fatal("fade-in read never failed")
 }
+
+// TestCrossfadeAckContinuesWithoutRestart locks the embedder side of the
+// crossfade contract: when the fork promotes the secondary at fade start,
+// the embedder acknowledges by re-setting the same source and must NOT
+// follow with a seek — the incoming decoder is already mid-fade. Seeking
+// to 0 here rewinds it, so the listener hears the next track start during
+// the fade and then restart from the beginning. The incoming ramp makes
+// any rewind visible as the ramp reappearing from its start.
+func TestCrossfadeAckContinuesWithoutRestart(t *testing.T) {
+	const fade = 400
+	const lenA, lenB = 2000, 1600
+	const baseB = 100_000
+
+	a := constSource(lenA, 0.5, 0)
+	b := rampSource(lenB, baseB, 0)
+
+	s := NewSwitchingAudioSource(fade)
+	s.SetPrimary(a)
+	s.SetSecondary(b)
+
+	// Drive to the fade, then perform exactly the fixed embedder ack
+	// sequence: same-source SetPrimary, no seek. Note consumed includes
+	// the fade-engaging read, so the pure-B region starts at an offset
+	// into the post-ack output.
+	consumed := readUntilFading(t, s, 128)
+	s.SetPrimary(b)
+
+	out := readUntilEOF(t, s, 128)
+
+	wantLen := lenA + lenB - fade
+	if consumed+len(out) != wantLen {
+		t.Fatalf("expected %d total samples, got %d", wantLen, consumed+len(out))
+	}
+	rel := lenA - consumed
+	if rel < 0 {
+		t.Fatalf("fade engaged %d samples past the track end, test chunking no longer covers it", -rel)
+	}
+
+	// Past the fade the incoming ramp continues where the fade left it:
+	// the fade consumes exactly fade samples of B, so anything less is a
+	// restart.
+	for k := 0; k < lenB-fade; k++ {
+		want := float32(baseB + fade + k)
+		if got := out[rel+k]; got != want {
+			t.Fatalf("post-fade sample %d: expected %f (no restart), got %f", k, want, got)
+		}
+	}
+}
