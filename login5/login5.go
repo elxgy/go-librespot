@@ -62,9 +62,43 @@ func NewLogin5(log librespot.Logger, client *http.Client, deviceId, clientToken,
 func (c *Login5) request(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
 	body, err := proto.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed marhsalling LoginRequest: %w", err)
+		return nil, fmt.Errorf("failed marshalling LoginRequest: %w", err)
 	}
 
+	var lastErr error
+	for attempt := 1; attempt <= login5ExchangeAttempts; attempt++ {
+		resp, retryable, err := c.exchangeOnce(ctx, body)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !retryable || attempt == login5ExchangeAttempts {
+			return nil, err
+		}
+		backoff := time.NewTimer(login5RetryBackoff(attempt))
+		select {
+		case <-ctx.Done():
+			backoff.Stop()
+			return nil, fmt.Errorf("login5 exchange aborted: %w", ctx.Err())
+		case <-backoff.C:
+		}
+	}
+	return nil, lastErr
+}
+
+// login5ExchangeAttempts bounds the retry loop for transient exchange
+// failures (unreachable endpoint, 5xx, or an unparseable body — all of
+// which an outage produces). Client rejections (4xx, including 429) are
+// final: retrying a rejection — or hammering a throttle — cannot heal it.
+const login5ExchangeAttempts = 3
+
+// login5RetryBackoff spaces exchange retries. Bounded and short: this runs
+// inside the single-flight token refresh, so it must not park callers.
+func login5RetryBackoff(attempt int) time.Duration {
+	return time.Duration(attempt) * 500 * time.Millisecond
+}
+
+func (c *Login5) exchangeOnce(ctx context.Context, body []byte) (*pb.LoginResponse, bool, error) {
 	httpReq := &http.Request{
 		Method: "POST",
 		URL:    c.baseUrl.JoinPath("/v3/login"),
@@ -78,22 +112,47 @@ func (c *Login5) request(ctx context.Context, req *pb.LoginRequest) (*pb.LoginRe
 
 	resp, err := c.client.Do(httpReq.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("failed requesting login5: %w", err)
+		return nil, true, fmt.Errorf("failed requesting login5: %w", err)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed reading login5 response: %w", err)
+		return nil, true, fmt.Errorf("failed reading login5 response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		retryable := resp.StatusCode >= 500 && resp.StatusCode < 600
+		return nil, retryable, fmt.Errorf("login5 exchange rejected: %s", responseEvidence(resp, respBody))
 	}
 
 	var protoResp pb.LoginResponse
 	if err := proto.Unmarshal(respBody, &protoResp); err != nil {
-		return nil, fmt.Errorf("faield unmarshalling LoginResponse: %w", err)
+		return nil, true, fmt.Errorf("failed decoding login5 response: %s: %w", responseEvidence(resp, respBody), err)
 	}
 
-	return &protoResp, nil
+	return &protoResp, false, nil
+}
+
+// responseEvidence describes a non-proto HTTP answer compactly for error
+// messages: status, wire content headers, body length, and a short escaped
+// prefix of the body. Auth error pages carry no secrets, but the prefix is
+// capped at 128 bytes and %q-escaped so nothing token-like can leak into
+// logs unquoted.
+func responseEvidence(resp *http.Response, respBody []byte) string {
+	evidence := fmt.Sprintf("status=%d content-type=%q content-encoding=%q content-length=%d",
+		resp.StatusCode,
+		resp.Header.Get("Content-Type"),
+		resp.Header.Get("Content-Encoding"),
+		len(respBody))
+	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
+		evidence += fmt.Sprintf(" retry-after=%q", retryAfter)
+	}
+	if len(respBody) > 0 {
+		evidence += fmt.Sprintf(" body=%.128q", string(respBody))
+	}
+	return evidence
 }
 
 func (c *Login5) Login(ctx context.Context, credentials proto.Message) error {

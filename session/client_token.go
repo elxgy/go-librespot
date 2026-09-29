@@ -67,7 +67,8 @@ func retrieveClientToken(c *http.Client, deviceId, clientId string) (string, err
 
 	var protoResp pbhttp.ClientTokenResponse
 	if err := proto.Unmarshal(respBody, &protoResp); err != nil {
-		return "", fmt.Errorf("faield unmarshalling clienttoken response: %w", err)
+		return "", fmt.Errorf("failed decoding clienttoken response (content-type=%q content-length=%d body=%.128q): %w",
+			resp.Header.Get("Content-Type"), len(respBody), string(respBody), err)
 	}
 
 	switch protoResp.ResponseType {
