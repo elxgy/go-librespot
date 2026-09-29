@@ -124,35 +124,15 @@ func (c *Login5) exchangeOnce(ctx context.Context, body []byte) (*pb.LoginRespon
 
 	if resp.StatusCode != http.StatusOK {
 		retryable := resp.StatusCode >= 500 && resp.StatusCode < 600
-		return nil, retryable, fmt.Errorf("login5 exchange rejected: %s", responseEvidence(resp, respBody))
+		return nil, retryable, fmt.Errorf("login5 exchange rejected: %s", librespot.HTTPExchangeEvidence(resp, respBody))
 	}
 
 	var protoResp pb.LoginResponse
 	if err := proto.Unmarshal(respBody, &protoResp); err != nil {
-		return nil, true, fmt.Errorf("failed decoding login5 response: %s: %w", responseEvidence(resp, respBody), err)
+		return nil, true, fmt.Errorf("failed decoding login5 response: %s: %w", librespot.HTTPExchangeEvidence(resp, respBody), err)
 	}
 
 	return &protoResp, false, nil
-}
-
-// responseEvidence describes a non-proto HTTP answer compactly for error
-// messages: status, wire content headers, body length, and a short escaped
-// prefix of the body. Auth error pages carry no secrets, but the prefix is
-// capped at 128 bytes and %q-escaped so nothing token-like can leak into
-// logs unquoted.
-func responseEvidence(resp *http.Response, respBody []byte) string {
-	evidence := fmt.Sprintf("status=%d content-type=%q content-encoding=%q content-length=%d",
-		resp.StatusCode,
-		resp.Header.Get("Content-Type"),
-		resp.Header.Get("Content-Encoding"),
-		len(respBody))
-	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
-		evidence += fmt.Sprintf(" retry-after=%q", retryAfter)
-	}
-	if len(respBody) > 0 {
-		evidence += fmt.Sprintf(" body=%.128q", string(respBody))
-	}
-	return evidence
 }
 
 func (c *Login5) Login(ctx context.Context, credentials proto.Message) error {

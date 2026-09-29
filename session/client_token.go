@@ -56,19 +56,18 @@ func retrieveClientToken(c *http.Client, deviceId, clientId string) (string, err
 
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("invalid status code from clienttoken: %d", resp.StatusCode)
-	}
-
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed reading clienttoken response: %w", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("clienttoken exchange rejected: %s", librespot.HTTPExchangeEvidence(resp, respBody))
+	}
+
 	var protoResp pbhttp.ClientTokenResponse
 	if err := proto.Unmarshal(respBody, &protoResp); err != nil {
-		return "", fmt.Errorf("failed decoding clienttoken response (content-type=%q content-length=%d body=%.128q): %w",
-			resp.Header.Get("Content-Type"), len(respBody), string(respBody), err)
+		return "", fmt.Errorf("failed decoding clienttoken response: %s: %w", librespot.HTTPExchangeEvidence(resp, respBody), err)
 	}
 
 	switch protoResp.ResponseType {

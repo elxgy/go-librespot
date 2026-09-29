@@ -1,6 +1,30 @@
 package go_librespot
 
-import "strings"
+import (
+	"fmt"
+	"net/http"
+	"strings"
+)
+
+// HTTPExchangeEvidence describes a non-proto HTTP answer compactly for error
+// messages: status, wire content headers, body length, and a short escaped
+// prefix of the body. Auth error pages carry no secrets, but the prefix is
+// capped at 128 bytes and %q-escaped so nothing token-like can leak into
+// logs unquoted.
+func HTTPExchangeEvidence(resp *http.Response, respBody []byte) string {
+	evidence := fmt.Sprintf("status=%d content-type=%q content-encoding=%q content-length=%d",
+		resp.StatusCode,
+		resp.Header.Get("Content-Type"),
+		resp.Header.Get("Content-Encoding"),
+		len(respBody))
+	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
+		evidence += fmt.Sprintf(" retry-after=%q", retryAfter)
+	}
+	if len(respBody) > 0 {
+		evidence += fmt.Sprintf(" body=%.128q", string(respBody))
+	}
+	return evidence
+}
 
 func ObfuscateUsername(username string) string {
 	if strings.Contains(username, "@") {
