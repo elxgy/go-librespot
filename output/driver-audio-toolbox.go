@@ -6,10 +6,11 @@ package output
 // #include <AudioToolbox/AudioToolbox.h>
 // #include <CoreAudio/CoreAudio.h>
 // #include <stdlib.h>
+// #include <stdint.h>
 // extern void audioCallback(void * inUserData, AudioQueueRef inAQ,	AudioQueueBufferRef inBuffer);
 //
 // typedef struct {
-//     void *output;
+//     uintptr_t output;
 // } AudioContext;
 //
 // static AudioContext* allocateAudioContext() {
@@ -23,11 +24,22 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"io"
+	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	librespot "github.com/elxgy/go-librespot"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
+)
+
+// Outputs the audio queue callback can reach, keyed by the id stored in their
+// AudioContext. The lookup may miss: Close drops the output from here even
+// when the queue fails to dispose and may still call back, and a callback
+// that finds nothing just returns.
+var (
+	toolboxOutputs  sync.Map
+	toolboxOutputID atomic.Uintptr
 )
 
 type toolboxOutput struct {
@@ -39,8 +51,8 @@ type toolboxOutput struct {
 	context    *C.AudioContext
 	paused     bool
 	volume     float32
+	closing    atomic.Bool
 	err        chan error
-	closed     bool
 }
 
 func newAudioToolboxOutput(opts *NewOutputOptions) (*toolboxOutput, error) {
@@ -53,7 +65,8 @@ func newAudioToolboxOutput(opts *NewOutputOptions) (*toolboxOutput, error) {
 		err:        make(chan error, 1),
 	}
 
-	// We need the C.AudioContext to give the callback safe access to the output context
+	// AudioQueue retains this C allocation until disposal. Store an integer
+	// id, never a Go pointer: the output contains Go-managed references.
 	log.Tracef("allocating audio context")
 	ctx := C.allocateAudioContext()
 	if ctx == nil {
@@ -61,8 +74,16 @@ func newAudioToolboxOutput(opts *NewOutputOptions) (*toolboxOutput, error) {
 		out.err <- allocErr
 		return nil, allocErr
 	}
-	ctx.output = unsafe.Pointer(out)
+	id := toolboxOutputID.Add(1)
+	toolboxOutputs.Store(id, out)
+	ctx.output = C.uintptr_t(id)
 	out.context = ctx
+	ready := false
+	defer func() {
+		if !ready {
+			_ = out.Close()
+		}
+	}()
 
 	// Create a new Audio Toolbox output
 	log.Tracef("configuring output")
@@ -86,7 +107,8 @@ func newAudioToolboxOutput(opts *NewOutputOptions) (*toolboxOutput, error) {
 		&out.audioQueue,
 	)
 	if err != 0 {
-		C.freeAudioContext(out.context)
+		// Nothing was created, so Close must not try to dispose it.
+		out.audioQueue = nil
 		return nil, out.toolboxError("setupAudioQueue", err)
 	}
 
@@ -96,7 +118,7 @@ func newAudioToolboxOutput(opts *NewOutputOptions) (*toolboxOutput, error) {
 		var buffer C.AudioQueueBufferRef
 		status := C.AudioQueueAllocateBuffer(out.audioQueue, C.UInt32(out.bufferSize*4), &buffer)
 		if status != C.noErr {
-			return nil, out.toolboxError("allocateAudioQueue", err)
+			return nil, out.toolboxError("allocateAudioQueue", status)
 		}
 
 		// Init buffer with silence
@@ -104,8 +126,14 @@ func newAudioToolboxOutput(opts *NewOutputOptions) (*toolboxOutput, error) {
 		buffer.mAudioDataByteSize = C.UInt32(out.bufferSize * 4)
 		status = C.AudioQueueEnqueueBuffer(out.audioQueue, buffer, 0, nil)
 		if status != C.noErr {
-			return nil, out.toolboxError("enqueueAudioQueue", err)
+			return nil, out.toolboxError("enqueueAudioQueue", status)
 		}
+	}
+
+	// The queue defaults to full volume. Apply the requested level before any
+	// samples can be played, including when startup is explicitly muted.
+	if status := C.AudioQueueSetParameter(out.audioQueue, C.kAudioQueueParam_Volume, C.Float32(opts.InitialVolume)); status != C.noErr {
+		return nil, out.toolboxError("setInitialVolume", status)
 	}
 
 	// Start the Audio Toolbox output
@@ -115,32 +143,51 @@ func newAudioToolboxOutput(opts *NewOutputOptions) (*toolboxOutput, error) {
 	}
 
 	log.Info("started audio-toolbox output")
+	ready = true
 	return out, nil
 }
 
 // Error handler - returns new error obj
 func (out *toolboxOutput) toolboxError(name string, err C.int) error {
-	if errors.Is(unix.Errno(-err), unix.EPIPE) {
-		_ = out.Close()
+	result := fmt.Errorf("%s: %d", name, err)
+	// Do not block the audio callback or dispose its own queue from inside it.
+	select {
+	case out.err <- result:
+	default:
 	}
-	out.err <- fmt.Errorf("%s: %d", name, err)
-	return fmt.Errorf("%s: %d", name, err)
+	return result
 }
 
 // Gets samples from the reader and writes them to the output buffer
 func (out *toolboxOutput) bufferSamples(buffer C.AudioQueueBufferRef) {
+	if out.closing.Load() {
+		return
+	}
 	data := make([]float32, out.bufferSize)
 	n, err := out.reader.Read(data)
-	if err != nil {
-		out.err <- fmt.Errorf("error reading samples: %v", err)
+	if out.closing.Load() {
+		return
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		// The reader is dead: retire the device and report without blocking
+		// the callback or disposing its own queue from inside it.
+		out.closing.Store(true)
+		select {
+		case out.err <- fmt.Errorf("error reading samples: %w", err):
+		default:
+		}
 		return
 	}
 
+	// A reader EOF is a natural end of stream (the pipe driver pauses on
+	// it): keep the queue cycling with whatever was read — possibly zero
+	// samples — so the next track reuses this device, and never surface the
+	// end as an error stop.
 	C.memcpy(unsafe.Pointer(buffer.mAudioData), unsafe.Pointer(&data[0]), C.size_t(n*4))
 	buffer.mAudioDataByteSize = C.UInt32(n * 4)
 
 	status := C.AudioQueueEnqueueBuffer(out.audioQueue, buffer, 0, nil)
-	if status != C.noErr {
+	if status != C.noErr && !out.closing.Load() {
 		log.Errorf("error queuing samples for output: %v", status)
 	}
 }
@@ -148,8 +195,11 @@ func (out *toolboxOutput) bufferSamples(buffer C.AudioQueueBufferRef) {
 //export audioCallback
 func audioCallback(inUserData unsafe.Pointer, inAQ C.AudioQueueRef, inBuffer C.AudioQueueBufferRef) {
 	ctx := (*C.AudioContext)(inUserData)
-	out := (*toolboxOutput)(ctx.output)
-	out.bufferSamples(inBuffer)
+	out, ok := toolboxOutputs.Load(uintptr(ctx.output))
+	if !ok {
+		return
+	}
+	out.(*toolboxOutput).bufferSamples(inBuffer)
 }
 
 func (out *toolboxOutput) Pause() error {
@@ -237,21 +287,27 @@ func (out *toolboxOutput) Error() <-chan error {
 }
 
 func (out *toolboxOutput) Closed() bool {
-	return out.closed
+	return out.closing.Load()
 }
 
 func (out *toolboxOutput) Close() error {
-	if out.closed {
-		return nil
+	out.closing.Store(true)
+	// Release the output first, whatever happens to the queue: callbacks
+	// from now on find nothing, and ones already running hold their own
+	// reference.
+	if out.context != nil {
+		toolboxOutputs.Delete(uintptr(out.context.output))
 	}
-	out.closed = true
 
-	// Stop the audio queue
-	C.AudioQueueStop(out.audioQueue, C.Boolean(1))
-
-	// Dispose of the audio queue
+	// Immediate disposal waits for callbacks to finish before their context
+	// can be freed. Also covers partially constructed outputs. If it fails the
+	// queue may still call back, so the context stays allocated and a later
+	// Close retries.
 	if out.audioQueue != nil {
-		C.AudioQueueDispose(out.audioQueue, C.Boolean(1))
+		if status := C.AudioQueueDispose(out.audioQueue, C.Boolean(1)); status != C.noErr {
+			return out.toolboxError("disposeAudioQueue", status)
+		}
+		out.audioQueue = nil
 	}
 
 	if out.context != nil {
