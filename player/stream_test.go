@@ -1,9 +1,13 @@
 package player
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"testing"
+
+	librespot "github.com/elxgy/go-librespot"
+	metadatapb "github.com/elxgy/go-librespot/proto/spotify/metadata"
 )
 
 type closeCounter struct {
@@ -89,5 +93,25 @@ func TestStreamCloseNilSafe(t *testing.T) {
 	s := &Stream{}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close on empty Stream should not error, got %v", err)
+	}
+}
+
+func TestStreamIsMatchesRequestedIdAfterRelink(t *testing.T) {
+	// A relinked stream's media carries the alternative's gid while callers
+	// keep asking with the id they requested.
+	requested := librespot.SpotifyIdFromGid(librespot.SpotifyIdTypeTrack, bytes.Repeat([]byte{0x01}, 16))
+	alt := librespot.SpotifyIdFromGid(librespot.SpotifyIdTypeTrack, bytes.Repeat([]byte{0x02}, 16))
+	media := librespot.NewMediaFromTrack(&metadatapb.Track{Gid: alt.Id()})
+	s := &Stream{RequestedId: requested, Media: media}
+
+	if !s.Is(requested) {
+		t.Fatal("stream must be recognized by the requested id after a relink")
+	}
+	if !s.Is(alt) {
+		t.Fatal("stream must also be recognized by the media gid")
+	}
+	other := librespot.SpotifyIdFromGid(librespot.SpotifyIdTypeTrack, bytes.Repeat([]byte{0x03}, 16))
+	if s.Is(other) {
+		t.Fatal("stream must not match an unrelated id")
 	}
 }

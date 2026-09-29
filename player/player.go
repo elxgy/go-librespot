@@ -716,8 +716,23 @@ func (p *Player) getUnrestrictedTrack(ctx context.Context, spotId librespot.Spot
 	return nil, nil, librespot.ErrMediaRestricted
 }
 
+// StartPosition is where media of the given duration should start playing when
+// asked to start at position. A position past the end, which a transfer from a
+// client with stale playback state can carry, would end the track the moment it
+// started and skip straight to the next one, so the track starts over instead.
+func StartPosition(position, duration int64) int64 {
+	if position <= 0 || position >= duration {
+		return 0
+	}
+	return position
+}
+
 func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId librespot.SpotifyId, bitrate int, mediaPosition int64) (*Stream, error) {
 	log := p.log.WithField("uri", spotId.Uri())
+
+	// Remember the id the caller asked for: spotId is reassigned below when a
+	// restricted track is relinked to an alternative.
+	requestedId := spotId
 
 	playbackId := make([]byte, 16)
 	_, _ = cryptorand.Read(playbackId)
@@ -941,16 +956,18 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 	}
 
 	// Seek to the correct position if needed.
-	if mediaPosition > 0 {
-		if err := stream.SetPositionMs(max(0, min(mediaPosition, int64(media.Duration())))); err != nil {
+	if position := StartPosition(mediaPosition, int64(media.Duration())); position > 0 {
+		if err := stream.SetPositionMs(position); err != nil {
 			if closer, ok := stream.(io.Closer); ok {
 				_ = closer.Close()
 			}
 			return nil, fmt.Errorf("failed seeking stream: %w", err)
 		}
+	} else if mediaPosition > 0 {
+		log.Debugf("start position %dms is past the end (%dms), starting from the beginning", mediaPosition, media.Duration())
 	}
 
 	succeeded = true
 	streamHandedOff = true
-	return &Stream{PlaybackId: playbackId, Source: stream, Media: media, File: file, closers: []io.Closer{decryptedStream, rawStream}}, nil
+	return &Stream{PlaybackId: playbackId, RequestedId: requestedId, Source: stream, Media: media, File: file, closers: []io.Closer{decryptedStream, rawStream}}, nil
 }
