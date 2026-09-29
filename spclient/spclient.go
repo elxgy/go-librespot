@@ -27,6 +27,21 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// isRetryableHTTPStatus reports whether a spclient answer is a transient
+// server-side failure worth the retry budget. 4xx answers (including 429
+// throttling) are final: retrying adds load to an already unhappy server.
+func isRetryableHTTPStatus(status int) bool {
+	switch status {
+	case http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 type Spclient struct {
 	log librespot.Logger
 
@@ -78,7 +93,6 @@ func (c *Spclient) innerRequest(ctx context.Context, method string, reqUrl *url.
 		req.GetBody = func() (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(body)), nil
 		}
-		req.Body, _ = req.GetBody()
 	}
 
 	var forceNewToken bool
@@ -92,19 +106,33 @@ func (c *Spclient) innerRequest(ctx context.Context, method string, reqUrl *url.
 
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
 
+		// The request body is consumed and closed by Client.Do. Recreate it
+		// for every attempt.
+		if req.GetBody != nil {
+			req.Body, err = req.GetBody()
+			if err != nil {
+				return nil, backoff.Permanent(fmt.Errorf("failed recreating request body: %w", err))
+			}
+		}
+
 		resp, err := c.client.Do(req.WithContext(ctx))
 		if err != nil {
 			return nil, err
-		} else if resp.StatusCode == 401 {
+		}
+
+		if resp.StatusCode == http.StatusUnauthorized {
 			_ = resp.Body.Close()
 
 			forceNewToken = true
 			return nil, fmt.Errorf("unauthorized")
-		} else if resp.StatusCode == 502 {
+		}
+
+		if isRetryableHTTPStatus(resp.StatusCode) {
+			status := resp.StatusCode
 			_ = resp.Body.Close()
 
-			c.log.Debugf("spclient request returned bad gateway, retrying...")
-			return nil, fmt.Errorf("bad gateway")
+			c.log.Debugf("spclient request returned transient status %d, retrying...", status)
+			return nil, fmt.Errorf("spclient request returned transient status %d", status)
 		}
 
 		return resp, nil
@@ -189,7 +217,18 @@ func (c *Spclient) PutConnectState(ctx context.Context, spotConnId string, reqPr
 				return nil, fmt.Errorf("failed reading error response: %w", err)
 			}
 			c.log.Debugf("put state request failed with status %d: %s", resp.StatusCode, putError.Message)
-			return nil, fmt.Errorf("put state request failed with status %d: %s", resp.StatusCode, putError.Message)
+			reqErr := fmt.Errorf("put state request failed with status %d: %s", resp.StatusCode, putError.Message)
+
+			// 4xx isn't transient: retrying (especially a 429) just adds load, and the next
+			// transition re-sends state anyway. Stop here; a 429 carries a cooldown for a
+			// coalesced resend. Only 5xx / network errors keep the retry budget.
+			if resp.StatusCode == http.StatusTooManyRequests {
+				return nil, backoff.Permanent(&RateLimitedError{RetryAfter: parseRetryAfter(resp.Header), err: reqErr})
+			}
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return nil, backoff.Permanent(reqErr)
+			}
+			return nil, reqErr
 		} else {
 			c.log.Debugf("put connect state because %s", reqProto.PutStateReason)
 			return resp, nil
@@ -199,6 +238,36 @@ func (c *Spclient) PutConnectState(ctx context.Context, spotConnId string, reqPr
 		return err
 	}
 	return nil
+}
+
+// RateLimitedError reports a connect-state 429; RetryAfter is the advised cooldown.
+type RateLimitedError struct {
+	RetryAfter time.Duration
+	err        error
+}
+
+func (e *RateLimitedError) Error() string { return e.err.Error() }
+func (e *RateLimitedError) Unwrap() error { return e.err }
+
+// parseRetryAfter reads a Retry-After header (seconds or HTTP-date), with a default fallback.
+func parseRetryAfter(h http.Header) time.Duration {
+	const def = 10 * time.Second
+	v := h.Get("Retry-After")
+	if v == "" {
+		return def
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return def
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return def
 }
 
 func (c *Spclient) ResolveStorageInteractive(ctx context.Context, fileId []byte, format *metadatapb.AudioFile_Format, prefetch bool) (*storagepb.StorageResolveResponse, error) {
