@@ -28,6 +28,7 @@ type List struct {
 	playingQueue       bool
 	queue              []*connectpb.ContextTrack
 	maxTracksInContext int
+	dropped            map[int]struct{}
 }
 
 func NewTrackListFromContext(ctx context.Context, log_ librespot.Logger, sp *spclient.Spclient, spotCtx *connectpb.Context, maxTracksInContext int) (_ *List, err error) {
@@ -64,7 +65,7 @@ func (tl *List) ShuffleStartPos() int {
 
 // ensurePlaybackOrder loads all pages and builds the identity playback order if not yet built.
 func (tl *List) ensurePlaybackOrder(ctx context.Context) error {
-	if tl.playbackOrder != nil && tl.tracks.len() == len(tl.playbackOrder) {
+	if tl.playbackOrder != nil && tl.tracks.len() == len(tl.playbackOrder)+len(tl.dropped) {
 		return nil
 	}
 
@@ -83,10 +84,41 @@ func (tl *List) ensurePlaybackOrder(ctx context.Context) error {
 // buildPlaybackOrder (re)builds the identity playback order for all currently loaded tracks.
 func (tl *List) buildPlaybackOrder() {
 	n := tl.tracks.len()
-	tl.playbackOrder = make([]int, n)
-	for i := range n {
-		tl.playbackOrder[i] = i
+	if len(tl.playbackOrder) == 0 {
+		tl.playbackOrder = make([]int, 0, n)
+		for i := 0; i < n; i++ {
+			if _, ok := tl.dropped[i]; ok {
+				continue
+			}
+			tl.playbackOrder = append(tl.playbackOrder, i)
+		}
+		return
 	}
+	seen := make(map[int]struct{}, len(tl.playbackOrder))
+	kept := make([]int, 0, n)
+	for _, ctxIdx := range tl.playbackOrder {
+		if ctxIdx < 0 || ctxIdx >= n {
+			continue
+		}
+		if _, ok := tl.dropped[ctxIdx]; ok {
+			continue
+		}
+		if _, ok := seen[ctxIdx]; ok {
+			continue
+		}
+		seen[ctxIdx] = struct{}{}
+		kept = append(kept, ctxIdx)
+	}
+	for i := 0; i < n; i++ {
+		if _, ok := tl.dropped[i]; ok {
+			continue
+		}
+		if _, ok := seen[i]; ok {
+			continue
+		}
+		kept = append(kept, i)
+	}
+	tl.playbackOrder = kept
 }
 
 // extendPlaybackOrder extends the playback order for newly loaded pages without rebuilding.
@@ -95,7 +127,14 @@ func (tl *List) extendPlaybackOrder() {
 	if tl.playbackOrder == nil {
 		tl.playbackOrder = make([]int, 0, n)
 	}
-	for i := len(tl.playbackOrder); i < n; i++ {
+	covered := len(tl.playbackOrder) + len(tl.dropped)
+	if covered < 0 {
+		covered = 0
+	}
+	for i := covered; i < n; i++ {
+		if _, ok := tl.dropped[i]; ok {
+			continue
+		}
 		tl.playbackOrder = append(tl.playbackOrder, i)
 	}
 }
@@ -117,6 +156,7 @@ func (tl *List) TrySeek(ctx context.Context, f func(track *connectpb.ContextTrac
 
 		tl.tracks.clear()
 		tl.playbackOrder = nil
+		tl.dropped = nil
 		tl.playbackPos = -1
 	}
 
@@ -620,6 +660,69 @@ func (tl *List) GoToQueueEntry(index int) bool {
 
 	tl.queue = tl.queue[i:]
 	tl.playingQueue = true
+	return true
+}
+
+func (tl *List) UpNextManualCount() int {
+	if len(tl.queue) == 0 {
+		return 0
+	}
+	if tl.playingQueue {
+		return max(0, len(tl.queue)-1)
+	}
+	return len(tl.queue)
+}
+
+func (tl *List) ReorderUpNext(from, to int) bool {
+	if from < 0 || to < 0 || from == to {
+		return false
+	}
+	q := tl.UpNextManualCount()
+	if from < q && to < q {
+		return tl.ReorderQueue(from, to)
+	}
+	if from < q || to < q {
+		return false
+	}
+	if tl.playbackOrder == nil || tl.playbackPos < 0 {
+		return false
+	}
+	f := tl.playbackPos + 1 + (from - q)
+	t := tl.playbackPos + 1 + (to - q)
+	if f <= tl.playbackPos || t <= tl.playbackPos || f >= len(tl.playbackOrder) || t >= len(tl.playbackOrder) {
+		return false
+	}
+	entry := tl.playbackOrder[f]
+	if f < t {
+		copy(tl.playbackOrder[f:t], tl.playbackOrder[f+1:t+1])
+		tl.playbackOrder[t] = entry
+	} else {
+		copy(tl.playbackOrder[t+1:f+1], tl.playbackOrder[t:f])
+		tl.playbackOrder[t] = entry
+	}
+	return true
+}
+
+func (tl *List) RemoveUpNext(index int) bool {
+	if index < 0 {
+		return false
+	}
+	q := tl.UpNextManualCount()
+	if index < q {
+		return tl.RemoveFromQueue(index)
+	}
+	if tl.playbackOrder == nil || tl.playbackPos < 0 {
+		return false
+	}
+	pos := tl.playbackPos + 1 + (index - q)
+	if pos <= tl.playbackPos || pos >= len(tl.playbackOrder) {
+		return false
+	}
+	if tl.dropped == nil {
+		tl.dropped = make(map[int]struct{})
+	}
+	tl.dropped[tl.playbackOrder[pos]] = struct{}{}
+	tl.playbackOrder = append(tl.playbackOrder[:pos], tl.playbackOrder[pos+1:]...)
 	return true
 }
 

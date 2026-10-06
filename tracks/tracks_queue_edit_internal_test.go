@@ -190,3 +190,134 @@ func TestQueueEditEmptyUIDEntries(t *testing.T) {
 		t.Fatal("queue editing must work positionally on empty-UID entries")
 	}
 }
+
+func newContextUpNextList(t *testing.T, uris []string) *List {
+	t.Helper()
+	var page []*connectpb.ContextTrack
+	for _, uri := range uris {
+		page = append(page, &connectpb.ContextTrack{Uri: uri})
+	}
+	spotCtx := &connectpb.Context{
+		Uri:   "spotify:playlist:test",
+		Pages: []*connectpb.ContextPage{{Tracks: page}},
+	}
+	tl, err := NewTrackListFromContext(context.Background(), &librespot.NullLogger{}, nil, spotCtx, 0)
+	if err != nil {
+		t.Fatalf("failed building track list: %v", err)
+	}
+	if err := tl.Seek(context.Background(), func(track *connectpb.ContextTrack) bool { return track.Uri == uris[0] }); err != nil {
+		t.Fatalf("seek failed: %v", err)
+	}
+	return tl
+}
+
+func upNextURIs(tl *List, n int) []string {
+	var out []string
+	for _, tr := range tl.UpcomingTracksLoaded(n) {
+		out = append(out, tr.Uri)
+	}
+	return out
+}
+
+func TestReorderUpNextContextMovesWithinPlaybackOrder(t *testing.T) {
+	uris := []string{"t0", "t1", "t2", "t3", "t4"}
+	tl := newContextUpNextList(t, uris)
+
+	if !tl.ReorderUpNext(0, 2) {
+		t.Fatal("expected context reorder to succeed")
+	}
+	got := upNextURIs(tl, 10)
+	want := []string{"t2", "t3", "t1", "t4"}
+	if len(got) != len(want) {
+		t.Fatalf("up-next = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("up-next = %v, want %v", got, want)
+		}
+	}
+	if cur := tl.CurrentTrack(); cur == nil || cur.Uri != "t0" {
+		t.Fatalf("current track must not move, got %v", cur)
+	}
+}
+
+func TestReorderUpNextCrossBoundaryRefused(t *testing.T) {
+	uris := []string{"t0", "t1", "t2"}
+	tl := newContextUpNextList(t, uris)
+	tl.AddToQueue(&connectpb.ContextTrack{Uri: "q0"})
+
+	if tl.ReorderUpNext(0, 1) {
+		t.Fatal("manual-to-context reorder must fail")
+	}
+	if tl.ReorderUpNext(1, 0) {
+		t.Fatal("context-to-manual reorder must fail")
+	}
+	got := upNextURIs(tl, 10)
+	if len(got) != 3 || got[0] != "q0" || got[1] != "t1" || got[2] != "t2" {
+		t.Fatalf("refused reorder must not mutate, up-next = %v", got)
+	}
+}
+
+func TestReorderUpNextManualRoutesToQueue(t *testing.T) {
+	uris := []string{"t0", "t1"}
+	tl := newContextUpNextList(t, uris)
+	tl.AddToQueue(&connectpb.ContextTrack{Uri: "q0"})
+	tl.AddToQueue(&connectpb.ContextTrack{Uri: "q1"})
+
+	if !tl.ReorderUpNext(0, 1) {
+		t.Fatal("expected manual reorder to succeed")
+	}
+	got := upNextURIs(tl, 10)
+	if len(got) != 3 || got[0] != "q1" || got[1] != "q0" || got[2] != "t1" {
+		t.Fatalf("up-next = %v, want [q1 q0 t1]", got)
+	}
+}
+
+func TestRemoveUpNextContextDropsFromPlaybackOrder(t *testing.T) {
+	uris := []string{"t0", "t1", "t2"}
+	tl := newContextUpNextList(t, uris)
+
+	if !tl.RemoveUpNext(1) {
+		t.Fatal("expected context remove to succeed")
+	}
+	got := upNextURIs(tl, 10)
+	if len(got) != 1 || got[0] != "t1" {
+		t.Fatalf("up-next = %v, want [t1]", got)
+	}
+	if cur := tl.CurrentTrack(); cur == nil || cur.Uri != "t0" {
+		t.Fatalf("current track must not move, got %v", cur)
+	}
+}
+
+func TestRemoveUpNextContextSurvivesRebuild(t *testing.T) {
+	uris := []string{"t0", "t1", "t2", "t3"}
+	tl := newContextUpNextList(t, uris)
+
+	if !tl.ReorderUpNext(0, 2) {
+		t.Fatal("expected reorder to succeed")
+	}
+	if !tl.RemoveUpNext(0) {
+		t.Fatal("expected remove to succeed")
+	}
+	tl.buildPlaybackOrder()
+	if err := tl.Seek(context.Background(), func(track *connectpb.ContextTrack) bool { return track.Uri == "t0" }); err != nil {
+		t.Fatalf("re-seek failed: %v", err)
+	}
+	got := upNextURIs(tl, 10)
+	want := []string{"t3", "t1"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("edits must survive a rebuild, up-next = %v, want %v", got, want)
+	}
+}
+
+func TestRemoveUpNextOutOfRange(t *testing.T) {
+	uris := []string{"t0", "t1"}
+	tl := newContextUpNextList(t, uris)
+
+	if tl.RemoveUpNext(5) || tl.RemoveUpNext(-1) {
+		t.Fatal("out-of-range remove must fail")
+	}
+	if tl.ReorderUpNext(0, 5) {
+		t.Fatal("out-of-range reorder must fail")
+	}
+}
