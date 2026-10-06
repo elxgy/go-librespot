@@ -817,7 +817,7 @@ func (p *Player) NewStream(ctx context.Context, client *http.Client, spotId libr
 	// file handle or cancels the in-flight download.
 	streamHandedOff := false
 	defer func() {
-		if !streamHandedOff {
+		if !streamHandedOff && rawStream != nil {
 			_ = rawStream.Close()
 		}
 	}()
